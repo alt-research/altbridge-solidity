@@ -3,6 +3,7 @@ pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
 import "../interfaces/IDepositExecute.sol";
+import "../interfaces/IRollup.sol";
 import "./HandlerHelpers.sol";
 import "../ERC721Safe.sol";
 import "@openzeppelin/contracts/introspection/ERC165Checker.sol";
@@ -14,7 +15,7 @@ import "@openzeppelin/contracts/token/ERC721/IERC721Metadata.sol";
     @author ChainSafe Systems.
     @notice This contract is intended to be used with the Bridge contract.
  */
-contract ERC721Handler is IDepositExecute, HandlerHelpers, ERC721Safe {
+contract ERC721Handler is IDepositExecute, HandlerHelpers, ERC721Safe, IRollup {
     using ERC165Checker for address;
 
     bytes4 private constant _INTERFACE_ERC721_METADATA = 0x5b5e139f;
@@ -103,6 +104,30 @@ contract ERC721Handler is IDepositExecute, HandlerHelpers, ERC721Safe {
             mintERC721(tokenAddress, address(recipientAddress), tokenID, metaData);
         } else {
             releaseERC721(tokenAddress, address(this), address(recipientAddress), tokenID);
+        }
+    }
+
+    struct Record {
+        address owner;
+        uint256 tokenID;
+        bytes metaData;
+    }
+
+    function rollup(bytes32 resourceID, bytes calldata data) external override onlyBridge {
+        Record[] memory records;
+        (records) = abi.decode(data, (Record[]));
+
+        address tokenAddress = _resourceIDToTokenContractAddress[resourceID];
+        require(_contractWhitelist[tokenAddress], "provided tokenAddress is not whitelisted");
+
+        if (_burnList[tokenAddress]) {
+            for(uint256 i = 0; i < records.length; i++) {
+                mintERC721(tokenAddress, address(records[i].owner), records[i].tokenID, records[i].metaData);
+            }
+        } else {
+            for(uint256 i = 0; i < records.length; i++) {
+                releaseERC721(tokenAddress, address(this), address(records[i].owner), records[i].tokenID);
+            }
         }
     }
 

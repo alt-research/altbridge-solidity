@@ -7,6 +7,7 @@ import "./utils/Pausable.sol";
 import "./utils/SafeMath.sol";
 import "./utils/SafeCast.sol";
 import "./interfaces/IDepositExecute.sol";
+import "./interfaces/IRollup.sol";
 import "./interfaces/IERCHandler.sol";
 import "./interfaces/IGenericHandler.sol";
 
@@ -19,6 +20,7 @@ contract Bridge is Pausable, AccessControl, SafeMath {
 
     // Limit relayers number because proposal can fit only so much votes
     uint256 constant public MAX_RELAYERS = 200;
+    uint256 constant public MAX_ROLLUPERS = 10;
 
     uint8   public _domainID;
     uint8   public _relayerThreshold;
@@ -40,10 +42,14 @@ contract Bridge is Pausable, AccessControl, SafeMath {
     mapping(bytes32 => address) public _resourceIDToHandlerAddress;
     // destinationDomainID + depositNonce => dataHash => Proposal
     mapping(uint72 => mapping(bytes32 => Proposal)) private _proposals;
+    // resourceID => owner address
+    mapping(bytes32 => bool) private _rollupResources;
 
     event RelayerThresholdChanged(uint256 newThreshold);
     event RelayerAdded(address relayer);
     event RelayerRemoved(address relayer);
+    event RolluperAdded(address rolluper);
+    event RolluperRemoved(address rolluper);
     event Deposit(
         uint8   destinationDomainID,
         bytes32 resourceID,
@@ -69,6 +75,7 @@ contract Bridge is Pausable, AccessControl, SafeMath {
     );
 
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
+    bytes32 public constant ROLLUPER_ROLE = keccak256("ROLLUPER_ROLE");
 
     modifier onlyAdmin() {
         _onlyAdmin();
@@ -85,6 +92,11 @@ contract Bridge is Pausable, AccessControl, SafeMath {
         _;
     }
 
+    modifier onlyRollupers() {
+        _onlyRollupers();
+        _;
+    }
+
     function _onlyAdminOrRelayer() private view {
         require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || hasRole(RELAYER_ROLE, msg.sender),
             "sender is not relayer or admin");
@@ -96,6 +108,10 @@ contract Bridge is Pausable, AccessControl, SafeMath {
 
     function _onlyRelayers() private view {
         require(hasRole(RELAYER_ROLE, msg.sender), "sender doesn't have relayer role");
+    }
+
+    function _onlyRollupers() private view {
+        require(hasRole(ROLLUPER_ROLE, msg.sender), "sender doesn't have rolluper role");
     }
 
     function _relayerBit(address relayer) private view returns(uint) {
@@ -210,6 +226,19 @@ contract Bridge is Pausable, AccessControl, SafeMath {
         emit RelayerRemoved(relayerAddress);
     }
 
+    function adminAddRolluper(address rolluperAddress) external {
+        require(!hasRole(ROLLUPER_ROLE, rolluperAddress), "addr already has rolluper role!");
+        require(_totalRollupers() < MAX_ROLLUPERS, "rollupers limit reached");
+        grantRole(ROLLUPER_ROLE, rolluperAddress);
+        emit RolluperAdded(rolluperAddress);
+    }
+
+    function adminRemoveRolluper(address rolluperAddress) external {
+        require(hasRole(ROLLUPER_ROLE, rolluperAddress), "addr doesn't have rolluper role!");
+        revokeRole(ROLLUPER_ROLE, rolluperAddress);
+        emit RolluperRemoved(rolluperAddress);
+    }
+
     /**
         @notice Sets a new resource for handler contracts that use the IERCHandler interface,
         and maps the {handlerAddress} to {resourceID} in {_resourceIDToHandlerAddress}.
@@ -289,6 +318,10 @@ contract Bridge is Pausable, AccessControl, SafeMath {
      */
     function _totalRelayers() public view returns (uint) {
         return AccessControl.getRoleMemberCount(RELAYER_ROLE);
+    }
+
+    function _totalRollupers() public view returns (uint) {
+        return AccessControl.getRoleMemberCount(ROLLUPER_ROLE);
     }
 
     /**
@@ -474,5 +507,25 @@ contract Bridge is Pausable, AccessControl, SafeMath {
         for (uint256 i = 0; i < addrs.length; i++) {
             addrs[i].transfer(amounts[i]);
         }
+    }
+
+    function adminAddRollupResource(bytes32 resourceID) external onlyAdmin {
+        address handler = _resourceIDToHandlerAddress[resourceID];
+        require(handler != address(0), "no handler for resourceID");
+        _rollupResources[resourceID] = true;
+    }
+
+    function adminRemoveRollupResource(bytes32 resourceID) external onlyAdmin {
+        delete _rollupResources[resourceID];
+    }
+
+    function rollup(bytes32 resourceID, bytes calldata data) external onlyRollupers whenNotPaused {
+        require(_rollupResources[resourceID], "resourceID is not allowed to rollup");
+
+        address handler = _resourceIDToHandlerAddress[resourceID];
+        require(handler != address(0), "no handler for resourceID");
+
+        IRollup rollupHandler = IRollup(handler);
+        rollupHandler.rollup(resourceID, data);
     }
 }

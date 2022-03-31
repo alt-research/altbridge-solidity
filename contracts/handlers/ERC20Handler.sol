@@ -3,6 +3,7 @@ pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
 import "../interfaces/IDepositExecute.sol";
+import "../interfaces/IRollup.sol";
 import "./HandlerHelpers.sol";
 import "../ERC20Safe.sol";
 
@@ -11,13 +12,36 @@ import "../ERC20Safe.sol";
     @author ChainSafe Systems.
     @notice This contract is intended to be used with the Bridge contract.
  */
-contract ERC20Handler is IDepositExecute, HandlerHelpers, ERC20Safe {
+contract ERC20Handler is IDepositExecute, HandlerHelpers, ERC20Safe, IRollup {
     /**
         @param bridgeAddress Contract address of previously deployed Bridge.
      */
     constructor(
         address          bridgeAddress
     ) public HandlerHelpers(bridgeAddress) {
+    }
+
+    struct Record {
+        address owner;
+        uint256 amount;
+    }
+
+    function rollup(bytes32 resourceID, bytes calldata data) external override onlyBridge {
+        Record[] memory records;
+        (records) = abi.decode(data, (Record[]));
+
+        address tokenAddress = _resourceIDToTokenContractAddress[resourceID];
+        require(_contractWhitelist[tokenAddress], "provided tokenAddress is not whitelisted");
+
+        if (_burnList[tokenAddress]) {
+            for(uint256 i = 0; i < records.length; i++) {
+                mintERC20(tokenAddress, address(records[i].owner), records[i].amount);
+            }
+        } else {
+            for(uint256 i = 0; i < records.length; i++) {
+                releaseERC20(tokenAddress, address(records[i].owner), records[i].amount);
+            }
+        }
     }
 
     /**

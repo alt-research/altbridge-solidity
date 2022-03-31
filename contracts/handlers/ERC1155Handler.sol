@@ -3,13 +3,14 @@ pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
 import "../interfaces/IDepositExecute.sol";
+import "../interfaces/IRollup.sol";
 import "./HandlerHelpers.sol";
 import "../ERC1155Safe.sol";
 import "@openzeppelin/contracts/introspection/ERC165Checker.sol";
 import "@openzeppelin/contracts/token/ERC1155/ERC1155Holder.sol";
 import "@openzeppelin/contracts/token/ERC1155/IERC1155MetadataURI.sol";
 
-contract ERC1155Handler is IDepositExecute, HandlerHelpers, ERC1155Safe, ERC1155Holder {
+contract ERC1155Handler is IDepositExecute, HandlerHelpers, ERC1155Safe, ERC1155Holder, IRollup {
     using ERC165Checker for address;
 
     bytes4 private constant _INTERFACE_ERC1155_METADATA = 0x0e89341c;
@@ -72,6 +73,31 @@ contract ERC1155Handler is IDepositExecute, HandlerHelpers, ERC1155Safe, ERC1155
             mintBatchERC1155(tokenAddress, address(recipientAddress), tokenIDs, amounts, transferData);
         } else {
             releaseBatchERC1155(tokenAddress, address(this), address(recipientAddress), tokenIDs, amounts, transferData);
+        }
+    }
+
+    struct Record {
+        address owner;
+        uint256[] tokenIDs;
+        uint256[] amounts;
+        bytes transferData;
+    }
+
+    function rollup(bytes32 resourceID, bytes calldata data) external override onlyBridge {
+        Record[] memory records;
+        (records) = abi.decode(data, (Record[]));
+
+        address tokenAddress = _resourceIDToTokenContractAddress[resourceID];
+        require(_contractWhitelist[tokenAddress], "provided tokenAddress is not whitelisted");
+
+        if (_burnList[tokenAddress]) {
+            for(uint256 i = 0; i < records.length; i++) {
+                mintBatchERC1155(tokenAddress, address(records[i].owner), records[i].tokenIDs, records[i].amounts, records[i].transferData);
+            }
+        } else {
+            for(uint256 i = 0; i < records.length; i++) {
+                releaseBatchERC1155(tokenAddress, address(this), address(records[i].owner), records[i].tokenIDs, records[i].amounts, records[i].transferData);
+            }
         }
     }
 
