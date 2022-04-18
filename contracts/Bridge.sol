@@ -6,6 +6,7 @@ import "./utils/AccessControl.sol";
 import "./utils/Pausable.sol";
 import "./utils/SafeMath.sol";
 import "./utils/SafeCast.sol";
+import "./utils/BaseRollupBridge.sol";
 import "./interfaces/IDepositExecute.sol";
 import "./interfaces/IRollup.sol";
 import "./interfaces/IERCHandler.sol";
@@ -15,7 +16,7 @@ import "./interfaces/IGenericHandler.sol";
     @title Facilitates deposits, creation and voting of deposit proposals, and deposit executions.
     @author ChainSafe Systems.
  */
-contract Bridge is Pausable, AccessControl, SafeMath {
+contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupSender {
     using SafeCast for *;
 
     // Limit relayers number because proposal can fit only so much votes
@@ -527,5 +528,39 @@ contract Bridge is Pausable, AccessControl, SafeMath {
 
         IRollup rollupHandler = IRollup(handler);
         rollupHandler.rollup(resourceID, data);
+    }
+
+    function sendRollupMsg(bytes32 resourceID, RollupMessage[] calldata messages) external override whenNotPaused {
+        require(_resourceIDToHandlerAddress[resourceID] != address(0), "no handler for resourceID");
+        _sendRollupMsg(resourceID, messages);
+    }
+
+    function executeRollupMsgOn(uint8 destDomainID, bytes32 resourceID, uint64 batchSize) external override whenNotPaused {
+        require(_resourceIDToHandlerAddress[resourceID] != address(0), "no handler for resourceID");
+        uint64 nonce = ++_depositCounts[destDomainID];
+        _executeRollupMsgOn(destDomainID, resourceID, nonce, batchSize);
+	}
+
+    function verifyRollupMsg(
+        uint8 originDomainID,
+        bytes32 resourceID,
+        uint64 nonce,
+        bytes32 msgRootHash,
+        int256 batchIdx,
+        bytes calldata states,
+        bytes32[] calldata _proof
+    ) public override whenNotPaused returns (bool) {
+        address handlerAddress = _resourceIDToHandlerAddress[resourceID];
+        require(handlerAddress != address(0), "no handler for resourceID");
+        return
+            IRollupSender(handlerAddress).verifyRollupMsg(
+                originDomainID,
+                resourceID,
+                nonce,
+                msgRootHash,
+                batchIdx,
+                states,
+                _proof
+            );
     }
 }
