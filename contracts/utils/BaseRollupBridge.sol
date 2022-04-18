@@ -5,18 +5,19 @@ pragma experimental ABIEncoderV2;
 import "../interfaces/IRollupSender.sol";
 
 contract BaseRollupBridge {
-    event SendMsg(bytes32 resourceID, IRollupSender.RollupMessage[] messages, bytes32 proof);
-    event Rollup(
+    event SendRollupMsg(bytes32 resourceID, IRollupSender.RollupMsg[] messages, bytes32 proof);
+    event ExecRollup(
         uint8 destDomainID,
         bytes32 resourceID,
         uint64 nonce,
         uint64 batchSize,
         bytes32 proof
     );
+    event Debug(bytes data);
 
     mapping(bytes32 => bytes32) _latestState;
 
-    function _sendRollupMsg(bytes32 resourceID, IRollupSender.RollupMessage[] calldata messages)
+    function _sendRollupMsg(bytes32 resourceID, IRollupSender.RollupMsg[] calldata messages)
         internal
     {
         bytes32 proof = _latestState[resourceID];
@@ -24,7 +25,7 @@ contract BaseRollupBridge {
             proof = keccak256(abi.encode(proof, messages[i]));
         }
         _latestState[resourceID] = proof;
-        emit SendMsg(resourceID, messages, proof);
+        emit SendRollupMsg(resourceID, messages, proof);
     }
 
     function _executeRollupMsgOn(
@@ -38,6 +39,6 @@ contract BaseRollupBridge {
             return;
         }
         _latestState[resourceID] = 0;
-        emit Rollup(destDomainID, resourceID, nonce, batchSize, finalProof);
+        emit ExecRollup(destDomainID, resourceID, nonce, batchSize, finalProof);
     }
 }

@@ -10,6 +10,7 @@ contract RollupHandler is IDepositExecute, HandlerHelpers, IRollup {
     constructor(address bridgeAddress) public HandlerHelpers(bridgeAddress) {}
 
     mapping(uint72 => Metadata) _rollupInfos;
+    event Test(bytes32);
 
     function deposit(
         bytes32,
@@ -29,8 +30,8 @@ contract RollupHandler is IDepositExecute, HandlerHelpers, IRollup {
         uint64 nonce;
         bytes32 msgRootHash;
         bytes32 stateRootHash;
-        uint256 batchSize;
-        uint256 totalSize;
+        uint256 totalBatch;
+        // bytes state; unused
     }
 
     /**
@@ -54,7 +55,10 @@ contract RollupHandler is IDepositExecute, HandlerHelpers, IRollup {
             "provided contractAddress is not whitelisted"
         );
 
-        Metadata memory md = abi.decode(data, (Metadata));
+        Metadata memory md = abi.decode(
+            data,
+            (Metadata)
+        );
         uint72 nonceAndID = (uint72(md.nonce) << 8) | uint72(md.domainID);
         _rollupInfos[nonceAndID] = md;
     }
@@ -73,12 +77,12 @@ contract RollupHandler is IDepositExecute, HandlerHelpers, IRollup {
             if (computedHash < proofElement) {
                 // Hash(current computed hash + current element of the proof)
                 computedHash = keccak256(
-                    abi.encodePacked(computedHash, proofElement)
+                    abi.encode(computedHash, proofElement)
                 );
             } else {
                 // Hash(current element of the proof + current computed hash)
                 computedHash = keccak256(
-                    abi.encodePacked(proofElement, computedHash)
+                    abi.encode(proofElement, computedHash)
                 );
             }
         }
@@ -92,19 +96,20 @@ contract RollupHandler is IDepositExecute, HandlerHelpers, IRollup {
         bytes32 resourceID,
         uint64 nonce,
         bytes32 msgRootHash,
-        bytes32 leaf,
+        uint256 batchIdx,
+        bytes calldata states,
         bytes32[] calldata _proof
-    ) external view onlyBridge returns (bool) {
+    ) external onlyBridge returns (bool passed, bool isEnd) {
         uint72 nonceAndID = (uint72(nonce) << 8) | uint72(originDomainID);
         Metadata memory md = _rollupInfos[nonceAndID];
-        require(md.msgRootHash == msgRootHash);
-        require(md.resourceID == resourceID);
-        uint256 proofLength = md.totalSize / md.batchSize;
-        if (md.totalSize % md.batchSize != 0) {
-            proofLength++;
-        }
-        require(proofLength == _proof.length, "invalid proof length");
-        require(_verify(_proof, md.stateRootHash, leaf), "invalid proof");
-        return true;
+        require(md.msgRootHash == msgRootHash, "msg_root_hash not match");
+        require(md.resourceID == resourceID, "resource_id not match");
+        require(
+            _verify(_proof, md.stateRootHash, keccak256(states)),
+            "invalid proof"
+        );
+        passed = true;
+        isEnd = batchIdx == md.totalBatch-1;
+        return (passed, isEnd);
     }
 }

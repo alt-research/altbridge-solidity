@@ -61,6 +61,7 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
     );
     event ProposalEvent(
         uint8          originDomainID,
+        bytes32        resourceID,
         uint64         depositNonce,
         ProposalStatus status,
         bytes32 dataHash
@@ -408,13 +409,13 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
                 _proposedBlock : uint40(block.number) // Overflow is desired.
             });
 
-            emit ProposalEvent(domainID, depositNonce, ProposalStatus.Active, dataHash);
+            emit ProposalEvent(domainID, resourceID, depositNonce, ProposalStatus.Active, dataHash);
         } else if (uint40(sub(block.number, proposal._proposedBlock)) > _expiry) {
             // if the number of blocks that has passed since this proposal was
             // submitted exceeds the expiry threshold set, cancel the proposal
             proposal._status = ProposalStatus.Cancelled;
 
-            emit ProposalEvent(domainID, depositNonce, ProposalStatus.Cancelled, dataHash);
+            emit ProposalEvent(domainID, resourceID, depositNonce, ProposalStatus.Cancelled, dataHash);
         }
 
         if (proposal._status != ProposalStatus.Cancelled) {
@@ -426,7 +427,7 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
             // Finalize if _relayerThreshold has been reached
             if (proposal._yesVotesTotal >= _relayerThreshold) {
                 proposal._status = ProposalStatus.Passed;
-                emit ProposalEvent(domainID, depositNonce, ProposalStatus.Passed, dataHash);
+                emit ProposalEvent(domainID, resourceID, depositNonce, ProposalStatus.Passed, dataHash);
             }
         }
         _proposals[nonceAndID][dataHash] = proposal;
@@ -445,7 +446,7 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @notice Proposal must be past expiry threshold.
         @notice Emits {ProposalEvent} event with status {Cancelled}.
      */
-    function cancelProposal(uint8 domainID, uint64 depositNonce, bytes32 dataHash) public onlyAdminOrRelayer {
+    function cancelProposal(uint8 domainID, bytes32 resourceID, uint64 depositNonce, bytes32 dataHash) public onlyAdminOrRelayer {
         uint72 nonceAndID = (uint72(depositNonce) << 8) | uint72(domainID);
         Proposal memory proposal = _proposals[nonceAndID][dataHash];
         ProposalStatus currentStatus = proposal._status;
@@ -457,7 +458,7 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         proposal._status = ProposalStatus.Cancelled;
         _proposals[nonceAndID][dataHash] = proposal;
 
-        emit ProposalEvent(domainID, depositNonce, ProposalStatus.Cancelled, dataHash);
+        emit ProposalEvent(domainID, resourceID, depositNonce, ProposalStatus.Cancelled, dataHash);
     }
 
     /**
@@ -495,7 +496,7 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
             }
         }
         
-        emit ProposalEvent(domainID, depositNonce, ProposalStatus.Executed, dataHash);
+        emit ProposalEvent(domainID, resourceID, depositNonce, ProposalStatus.Executed, dataHash);
     }
 
     /**
@@ -530,7 +531,7 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         rollupHandler.rollup(resourceID, data);
     }
 
-    function sendRollupMsg(bytes32 resourceID, RollupMessage[] calldata messages) external override whenNotPaused {
+    function sendRollupMsg(bytes32 resourceID, RollupMsg[] calldata messages) external override whenNotPaused {
         require(_resourceIDToHandlerAddress[resourceID] != address(0), "no handler for resourceID");
         _sendRollupMsg(resourceID, messages);
     }
@@ -546,10 +547,10 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         bytes32 resourceID,
         uint64 nonce,
         bytes32 msgRootHash,
-        int256 batchIdx,
+        uint256 batchIdx,
         bytes calldata states,
         bytes32[] calldata _proof
-    ) public override whenNotPaused returns (bool) {
+    ) override public whenNotPaused returns (bool passed, bool isEnd) {
         address handlerAddress = _resourceIDToHandlerAddress[resourceID];
         require(handlerAddress != address(0), "no handler for resourceID");
         return

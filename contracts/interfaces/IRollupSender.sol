@@ -8,17 +8,17 @@ pragma experimental ABIEncoderV2;
  */
 interface IRollupSender {
     enum RollupMsgType {
-        SetKV
+        Map
     }
 
-    struct KvMsg {
+    struct MapMsg {
         bytes key;
         bytes value;
     }
 
-    struct RollupMessage {
+    struct RollupMsg {
         RollupMsgType ty;
-        string tag;
+        uint16 tag;
         bytes data;
     }
 
@@ -28,13 +28,13 @@ interface IRollupSender {
 
     struct RollupState {
         RollupStateType ty;
-        string tag;
+        uint16 tag;
         bytes records;
     }
 
     function sendRollupMsg(
         bytes32 resourceID,
-        RollupMessage[] calldata messages
+        RollupMsg[] calldata messages
     ) external;
 
     function executeRollupMsgOn(
@@ -48,8 +48,8 @@ interface IRollupSender {
         bytes32 resourceID,
         uint64 nonce,
         bytes32 msgRootHash,
-        int256 batchIdx,
+        uint256 batchIdx,
         bytes calldata states,
         bytes32[] calldata _proof
-    ) external returns (bool);
+    ) external returns (bool passed, bool isEnd);
 }
