@@ -28,7 +28,7 @@ contract BaseRollupBridge {
         emit SendRollupMsg(resourceID, messages, proof);
     }
 
-    function _executeRollupMsgOn(
+    function _executeRollupMsgTo(
         uint8 destDomainID,
         bytes32 resourceID,
         uint64 nonce,

@@ -536,10 +536,10 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         _sendRollupMsg(resourceID, messages);
     }
 
-    function executeRollupMsgOn(uint8 destDomainID, bytes32 resourceID, uint64 batchSize) external override whenNotPaused {
+    function executeRollupMsgTo(uint8 destDomainID, bytes32 resourceID, uint64 batchSize) external override whenNotPaused {
         require(_resourceIDToHandlerAddress[resourceID] != address(0), "no handler for resourceID");
         uint64 nonce = ++_depositCounts[destDomainID];
-        _executeRollupMsgOn(destDomainID, resourceID, nonce, batchSize);
+        _executeRollupMsgTo(destDomainID, resourceID, nonce, batchSize);
 	}
 
     function verifyRollupMsg(

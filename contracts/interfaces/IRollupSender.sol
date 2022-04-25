@@ -37,7 +37,7 @@ interface IRollupSender {
         RollupMsg[] calldata messages
     ) external;
 
-    function executeRollupMsgOn(
+    function executeRollupMsgTo(
         uint8 destDomainID,
         bytes32 resourceID,
         uint64 batchSize

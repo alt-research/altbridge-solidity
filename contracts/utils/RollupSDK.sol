@@ -26,7 +26,8 @@ contract RollupSDK {
         bytes32[] calldata _proof
     ) external {
         bool passed;
-        (passed, ) = IRollupSender(_bridgeAddress).verifyRollupMsg(
+        bool isEnd;
+        (passed, isEnd) = IRollupSender(_bridgeAddress).verifyRollupMsg(
             originDomainID,
             resourceID,
             nonce,
@@ -45,14 +46,28 @@ contract RollupSDK {
         IRollupSender.RollupState memory rollupStates;
         rollupStates = abi.decode(states, (IRollupSender.RollupState));
         _executeBatchNonce[nonceAndID]++;
-        handleRollupState(rollupStates);
+        recoverRollupState(rollupStates, isEnd);
     }
 
-    function handleRollupState(IRollupSender.RollupState memory)
-        internal
-        virtual
-    {
-        require(false, "handleRollupState is not implemented");
+    function recoverRollupState(
+        IRollupSender.RollupState memory state,
+        bool isEnd
+    ) internal virtual {
+        if (state.ty == IRollupSender.RollupStateType.Map) {
+            IRollupSender.MapMsg[] memory entries = abi.decode(
+                state.records,
+                (IRollupSender.MapMsg[])
+            );
+            recoverRollupStateMap(state.tag, entries, isEnd);
+        }
+    }
+
+    function recoverRollupStateMap(
+        uint16,
+        IRollupSender.MapMsg[] memory,
+        bool
+    ) internal virtual {
+        require(false, "handleRollupStateMap is not implemented");
         unused_ = true; // ignore the warning: Function state mutability can be restricted to pure
     }
 
@@ -60,8 +75,20 @@ contract RollupSDK {
         IRollupSender(_bridgeAddress).sendRollupMsg(_resourceID, messages);
     }
 
-    function executeRollupMsgOn(uint8 destDomainID, uint64 batchSize) internal {
-        IRollupSender(_bridgeAddress).executeRollupMsgOn(
+    function sendRollupMsgMap(uint16 tag, IRollupSender.MapMsg memory kvMsg) internal {
+        IRollupSender.RollupMsg[] memory msgs = new IRollupSender.RollupMsg[](
+            1
+        );
+        msgs[0] = IRollupSender.RollupMsg(
+            IRollupSender.RollupMsgType.Map,
+            tag,
+            abi.encode(kvMsg)
+        );
+        sendRollupMsg(msgs);
+    }
+
+    function executeRollupMsgTo(uint8 destDomainID, uint64 batchSize) internal {
+        IRollupSender(_bridgeAddress).executeRollupMsgTo(
             destDomainID,
             _resourceID,
             batchSize

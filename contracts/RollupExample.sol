@@ -5,7 +5,6 @@ pragma experimental ABIEncoderV2;
 import "./utils/RollupSDK.sol";
 
 contract RollupExample is RollupSDK {
-    
     uint16 constant owner_tag_ = 0;
     uint64 constant batch_size_ = 100;
 
@@ -22,24 +21,20 @@ contract RollupExample is RollupSDK {
         admin_ = msg.sender;
     }
 
-    function handleRollupState(IRollupSender.RollupState memory state)
-        internal
-        virtual
-        override
-    {
-        if (
-            state.tag == owner_tag_ &&
-            state.ty == IRollupSender.RollupStateType.Map
-        ) {
-            IRollupSender.MapMsg[] memory entries = abi.decode(
-                state.records,
-                (IRollupSender.MapMsg[])
-            );
+    function recoverRollupStateMap(
+        uint16 tag,
+        IRollupSender.MapMsg[] memory entries,
+        bool isEnd
+    ) internal virtual override {
+        if (tag == owner_tag_) {
             for (uint256 j = 0; j < entries.length; j++) {
                 uint256 tokenId = abi.decode(entries[j].key, (uint256));
                 address owner = abi.decode(entries[j].value, (address));
                 emit Transfer(tokenId, owner);
                 owner_[tokenId] = owner;
+            }
+            if (isEnd) {
+                pause_ = false;
             }
         }
     }
@@ -50,25 +45,25 @@ contract RollupExample is RollupSDK {
             require(owner_[tokenId] == msg.sender, "token not owned");
         }
         owner_[tokenId] = to;
-        IRollupSender.MapMsg memory kvMsg = IRollupSender.MapMsg(
-            abi.encode(tokenId),
-            abi.encode(to)
-        );
-        IRollupSender.RollupMsg[] memory msgs = new IRollupSender.RollupMsg[](
-            1
-        );
-
-        msgs[0] = IRollupSender.RollupMsg(
-            IRollupSender.RollupMsgType.Map,
+        sendRollupMsgMap(
             owner_tag_,
-            abi.encode(kvMsg)
+            IRollupSender.MapMsg(abi.encode(tokenId), abi.encode(to))
         );
-        sendRollupMsg(msgs);
     }
 
-    function rollup(uint8 targetDomainId) public {
+    function rollupTo(uint8 targetDomainId) public {
         require(msg.sender == admin_, "admin required");
         pause_ = true;
-        executeRollupMsgOn(targetDomainId, batch_size_);
+        executeRollupMsgTo(targetDomainId, batch_size_);
+    }
+
+    function pause() public {
+        require(msg.sender == admin_, "admin required");
+        pause_ = true;
+    }
+
+    function unpause() public {
+        require(msg.sender == admin_, "admin required");
+        pause_ = false;
     }
 }
