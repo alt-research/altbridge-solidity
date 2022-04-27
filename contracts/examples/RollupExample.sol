@@ -2,7 +2,7 @@
 pragma solidity ^0.6.12;
 pragma experimental ABIEncoderV2;
 
-import "./utils/RollupSDK.sol";
+import "../utils/RollupSDK.sol";
 
 contract RollupExample is RollupSDK {
     uint16 constant owner_tag_ = 0;
@@ -23,7 +23,7 @@ contract RollupExample is RollupSDK {
 
     function recoverRollupStateMap(
         uint16 tag,
-        IRollupSender.MapMsg[] memory entries,
+        RollupMapMsg[] memory entries,
         bool isEnd
     ) internal virtual override {
         if (tag == owner_tag_) {
@@ -45,10 +45,10 @@ contract RollupExample is RollupSDK {
             require(owner_[tokenId] == msg.sender, "token not owned");
         }
         owner_[tokenId] = to;
-        sendRollupMsgMap(
-            owner_tag_,
-            IRollupSender.MapMsg(abi.encode(tokenId), abi.encode(to))
-        );
+
+        RollupMapMsg[] memory msgs = new RollupMapMsg[](1);
+        msgs[0] = RollupMapMsg(abi.encode(tokenId), abi.encode(to));
+        emitRollupMapMsg(owner_tag_, msgs);
     }
 
     function rollupTo(uint8 targetDomainId) public {

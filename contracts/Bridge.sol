@@ -7,6 +7,7 @@ import "./utils/Pausable.sol";
 import "./utils/SafeMath.sol";
 import "./utils/SafeCast.sol";
 import "./utils/BaseRollupBridge.sol";
+import "./interfaces/IRollupSender.sol";
 import "./interfaces/IDepositExecute.sol";
 import "./interfaces/IRollup.sol";
 import "./interfaces/IERCHandler.sol";
@@ -531,16 +532,19 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         rollupHandler.rollup(resourceID, data);
     }
 
-    function sendRollupMsg(bytes32 resourceID, RollupMsg[] calldata messages) external override whenNotPaused {
-        require(_resourceIDToHandlerAddress[resourceID] != address(0), "no handler for resourceID");
-        _sendRollupMsg(resourceID, messages);
-    }
-
-    function executeRollupMsgTo(uint8 destDomainID, bytes32 resourceID, uint64 batchSize) external override whenNotPaused {
-        require(_resourceIDToHandlerAddress[resourceID] != address(0), "no handler for resourceID");
+    function executeRollupMsgTo(
+        uint8 destDomainID,
+        bytes32 resourceID,
+        uint64 batchSize,
+        bytes32 proof
+    ) external override whenNotPaused {
+        require(
+            _resourceIDToHandlerAddress[resourceID] != address(0),
+            "no handler for resourceID"
+        );
         uint64 nonce = ++_depositCounts[destDomainID];
-        _executeRollupMsgTo(destDomainID, resourceID, nonce, batchSize);
-	}
+        _executeRollupMsgTo(destDomainID, resourceID, nonce, batchSize, proof);
+    }
 
     function verifyRollupMsg(
         uint8 originDomainID,

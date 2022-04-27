@@ -2,45 +2,18 @@
 pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
+import "../utils/RollupTypes.sol";
+
 /**
     @title Interface for handler contracts that support deposits and deposit executions.
     @author ChainSafe Systems.
  */
 interface IRollupSender {
-    enum RollupMsgType {
-        Map
-    }
-
-    struct MapMsg {
-        bytes key;
-        bytes value;
-    }
-
-    struct RollupMsg {
-        RollupMsgType ty;
-        uint16 tag;
-        bytes data;
-    }
-
-    enum RollupStateType {
-        Map
-    }
-
-    struct RollupState {
-        RollupStateType ty;
-        uint16 tag;
-        bytes records;
-    }
-
-    function sendRollupMsg(
-        bytes32 resourceID,
-        RollupMsg[] calldata messages
-    ) external;
-
     function executeRollupMsgTo(
         uint8 destDomainID,
         bytes32 resourceID,
-        uint64 batchSize
+        uint64 batchSize,
+        bytes32 proof
     ) external;
 
     function verifyRollupMsg(

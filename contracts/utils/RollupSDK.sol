@@ -3,6 +3,8 @@ pragma solidity ^0.6.12;
 pragma experimental ABIEncoderV2;
 
 import "../interfaces/IRollupSender.sol";
+import "../utils/RollupTypes.sol";
+import "../utils/BaseRollupBridge.sol";
 
 contract RollupSDK {
     address public immutable _bridgeAddress;
@@ -10,6 +12,10 @@ contract RollupSDK {
     uint256 private epoch_;
     mapping(uint72 => uint256) _executeBatchNonce;
     bool private unused_;
+
+    struct Context {
+        bytes32 proof;
+    }
 
     constructor(address bridgeAddress, bytes32 resourceID) public {
         _bridgeAddress = bridgeAddress;
@@ -43,20 +49,20 @@ contract RollupSDK {
             _executeBatchNonce[nonceAndID] == batchIdx,
             "batchIdx not expected"
         );
-        IRollupSender.RollupState memory rollupStates;
-        rollupStates = abi.decode(states, (IRollupSender.RollupState));
+        RollupState memory rollupStates;
+        rollupStates = abi.decode(states, (RollupState));
         _executeBatchNonce[nonceAndID]++;
         recoverRollupState(rollupStates, isEnd);
     }
 
-    function recoverRollupState(
-        IRollupSender.RollupState memory state,
-        bool isEnd
-    ) internal virtual {
-        if (state.ty == IRollupSender.RollupStateType.Map) {
-            IRollupSender.MapMsg[] memory entries = abi.decode(
+    function recoverRollupState(RollupState memory state, bool isEnd)
+        internal
+        virtual
+    {
+        if (state.ty == RollupStateType.Map) {
+            RollupMapMsg[] memory entries = abi.decode(
                 state.records,
-                (IRollupSender.MapMsg[])
+                (RollupMapMsg[])
             );
             recoverRollupStateMap(state.tag, entries, isEnd);
         }
@@ -64,27 +70,29 @@ contract RollupSDK {
 
     function recoverRollupStateMap(
         uint16,
-        IRollupSender.MapMsg[] memory,
+        RollupMapMsg[] memory,
         bool
     ) internal virtual {
         require(false, "handleRollupStateMap is not implemented");
         unused_ = true; // ignore the warning: Function state mutability can be restricted to pure
     }
 
-    function sendRollupMsg(IRollupSender.RollupMsg[] memory messages) internal {
+    function sendRollupMsg(RollupMsg[] memory messages) internal {
         IRollupSender(_bridgeAddress).sendRollupMsg(_resourceID, messages);
     }
 
-    function sendRollupMsgMap(uint16 tag, IRollupSender.MapMsg memory kvMsg) internal {
-        IRollupSender.RollupMsg[] memory msgs = new IRollupSender.RollupMsg[](
-            1
-        );
-        msgs[0] = IRollupSender.RollupMsg(
-            IRollupSender.RollupMsgType.Map,
-            tag,
-            abi.encode(kvMsg)
-        );
+    function emitSingleRollupMapMsg(uint16 tag, RollupMapMsg memory kvMsg)
+        internal
+    {
+        RollupMsg[] memory msgs = new RollupMsg[](1);
+        msgs[0] = RollupMsg(RollupMsgType.Map, tag, abi.encode(kvMsg));
         sendRollupMsg(msgs);
+    }
+
+    function emitRollupMapMsg(uint16 tag, RollupMapMsg[] memory kvMsgs)
+        internal
+    {
+        
     }
 
     function executeRollupMsgTo(uint8 destDomainID, uint64 batchSize) internal {
