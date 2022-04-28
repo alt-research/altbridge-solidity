@@ -21,6 +21,34 @@ library RollupableLib {
         emitMsg(ctx, message);
     }
 
+    function emitKey(
+        RollupStateContext memory ctx,
+        uint16 tag,
+        bytes memory key
+    ) internal {
+        bytes memory empty;
+        RollupMsg memory message = RollupMsg(
+            RollupMsgType.Map,
+            tag,
+            abi.encode(RollupMapMsg(key, empty))
+        );
+        emitMsg(ctx, message);
+    }
+
+    function emitValue(
+        RollupStateContext memory ctx,
+        uint16 tag,
+        bytes memory value
+    ) internal {
+        bytes memory empty;
+        RollupMsg memory message = RollupMsg(
+            RollupMsgType.Map,
+            tag,
+            abi.encode(RollupMapMsg(empty, value))
+        );
+        emitMsg(ctx, message);
+    }
+
     function emitMsg(RollupStateContext memory ctx, RollupMsg memory message)
         internal
     {
@@ -28,5 +56,31 @@ library RollupableLib {
         emit EmitRollupMsg(message);
     }
 
-    function finalize(RollupStateContext memory ctx) internal {}
+    // https://github.com/binodnp/openzeppelin-solidity/blob/master/contracts/cryptography/MerkleProof.sol
+    function verifyMerkleProof(
+        bytes32[] calldata proof,
+        bytes32 root,
+        bytes32 leaf
+    ) internal pure returns (bool) {
+        bytes32 computedHash = leaf;
+
+        for (uint256 i = 0; i < proof.length; i++) {
+            bytes32 proofElement = proof[i];
+
+            if (computedHash < proofElement) {
+                // Hash(current computed hash + current element of the proof)
+                computedHash = keccak256(
+                    abi.encode(computedHash, proofElement)
+                );
+            } else {
+                // Hash(current element of the proof + current computed hash)
+                computedHash = keccak256(
+                    abi.encode(proofElement, computedHash)
+                );
+            }
+        }
+
+        // Check if the computed hash (root) is equal to the provided root
+        return computedHash == root;
+    }
 }

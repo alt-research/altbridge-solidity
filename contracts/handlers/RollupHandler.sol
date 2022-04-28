@@ -3,14 +3,19 @@ pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
 import "../interfaces/IDepositExecute.sol";
+import "../interfaces/IRollupHandler.sol";
 import "../interfaces/IRollup.sol";
 import "./HandlerHelpers.sol";
 
-contract RollupHandler is IDepositExecute, HandlerHelpers, IRollup {
+contract RollupHandler is
+    IDepositExecute,
+    HandlerHelpers,
+    IRollup,
+    IRollupHandler
+{
     constructor(address bridgeAddress) public HandlerHelpers(bridgeAddress) {}
 
     mapping(uint72 => Metadata) _rollupInfos;
-    event Test(bytes32);
 
     function deposit(
         bytes32,
@@ -55,61 +60,28 @@ contract RollupHandler is IDepositExecute, HandlerHelpers, IRollup {
             "provided contractAddress is not whitelisted"
         );
 
-        Metadata memory md = abi.decode(
-            data,
-            (Metadata)
-        );
+        Metadata memory md = abi.decode(data, (Metadata));
         uint72 nonceAndID = (uint72(md.nonce) << 8) | uint72(md.domainID);
         _rollupInfos[nonceAndID] = md;
     }
 
-    // https://github.com/binodnp/openzeppelin-solidity/blob/master/contracts/cryptography/MerkleProof.sol
-    function _verify(
-        bytes32[] calldata proof,
-        bytes32 root,
-        bytes32 leaf
-    ) internal pure returns (bool) {
-        bytes32 computedHash = leaf;
-
-        for (uint256 i = 0; i < proof.length; i++) {
-            bytes32 proofElement = proof[i];
-
-            if (computedHash < proofElement) {
-                // Hash(current computed hash + current element of the proof)
-                computedHash = keccak256(
-                    abi.encode(computedHash, proofElement)
-                );
-            } else {
-                // Hash(current element of the proof + current computed hash)
-                computedHash = keccak256(
-                    abi.encode(proofElement, computedHash)
-                );
-            }
-        }
-
-        // Check if the computed hash (root) is equal to the provided root
-        return computedHash == root;
-    }
-
-    function verifyRollupMsg(
+    function fetchRollupProposal(
         uint8 originDomainID,
         bytes32 resourceID,
-        uint64 nonce,
-        bytes32 msgRootHash,
-        uint256 batchIdx,
-        bytes calldata states,
-        bytes32[] calldata _proof
-    ) external onlyBridge returns (bool passed, bool isEnd) {
+        uint64 nonce
+    ) external override returns (RollupProposal memory, address) {
+        address receiverAddress = _resourceIDToTokenContractAddress[resourceID];
         uint72 nonceAndID = (uint72(nonce) << 8) | uint72(originDomainID);
         Metadata memory md = _rollupInfos[nonceAndID];
-        require(md.msgRootHash == msgRootHash, "msg_root_hash not match");
         require(md.resourceID == resourceID, "resource_id not match");
-        require(
-            _verify(_proof, md.stateRootHash, keccak256(states)),
-            "invalid proof"
-        );
-        passed = true;
-        isEnd = batchIdx == md.totalBatch-1;
-        return (passed, isEnd);
+        require(receiverAddress != address(0), "no handler for resourceID");
+        RollupProposal memory proposal;
+        proposal.originDomainID = originDomainID;
+        proposal.nonce = nonce;
+        proposal.stateRootHash = md.stateRootHash;
+        proposal.msgRootHash = md.msgRootHash;
+        proposal.stateRootHash = md.stateRootHash;
+        proposal.totalBatch = md.totalBatch;
+        return (proposal, receiverAddress);
     }
 }

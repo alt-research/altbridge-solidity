@@ -4,31 +4,27 @@ pragma experimental ABIEncoderV2;
 
 import "../utils/RollupSDK.sol";
 import "@openzeppelin/contracts/presets/ERC20PresetMinterPauser.sol";
-import "../utils/RollupableMap.sol";
+import "../utils/RollupableTypes.sol";
 
 contract RollupERC20 is RollupSDK, ERC20PresetMinterPauser {
     uint16 constant _balanceTag = 0;
+    uint16 constant _totalSupplyTag = 1;
     uint64 constant _batchSize = 100;
-    uint256 private _totalSupply;
-    using RollupableMap for RollupableMap.AddressUint256Map;
+    using RollupableTypes for RollupableTypes.AddressUint256Map;
+    using RollupableTypes for RollupableTypes.Uint256;
 
-    RollupableMap.AddressUint256Map private _balances;
-    bytes32 _balanceState;
+    RollupableTypes.AddressUint256Map private _balances;
+    RollupableTypes.Uint256 private _totalSupply;
 
     /**
      * @dev Allows overriding the name, symbol & decimal of the base ERC20 contract
      */
     constructor(
         address bridgeAddress,
-        bytes32 resourceID,
         string memory name,
         string memory symbol,
         uint8 decimals
-    )
-        public
-        ERC20PresetMinterPauser(name, symbol)
-        RollupSDK(bridgeAddress, resourceID)
-    {
+    ) public ERC20PresetMinterPauser(name, symbol) RollupSDK(bridgeAddress) {
         _setupDecimals(decimals);
     }
 
@@ -41,25 +37,17 @@ contract RollupERC20 is RollupSDK, ERC20PresetMinterPauser {
         require(recipient != address(0), "ERC20: transfer to the zero address");
 
         _beforeTokenTransfer(sender, recipient, amount);
-        RollupStateContext memory ctx;
-        ctx._state = _balanceState;
-        _balances.set(
+        RollupStateContext memory ctx = getContext();
+        _balances.sub(
             ctx,
             _balanceTag,
             sender,
-            _balances.get(sender).sub(
-                amount,
-                "ERC20: transfer amount exceeds balance"
-            )
+            amount,
+            "ERC20: transfer amount exceeds balance"
         );
-        _balances.set(
-            ctx,
-            _balanceTag,
-            recipient,
-            _balances.get(recipient).add(amount)
-        );
+        _balances.add(ctx, _balanceTag, recipient, amount);
         emit Transfer(sender, recipient, amount);
-        _balanceState = ctx._state;
+        saveContext(ctx);
     }
 
     function _mint(address account, uint256 amount) internal virtual override {
@@ -67,17 +55,11 @@ contract RollupERC20 is RollupSDK, ERC20PresetMinterPauser {
 
         _beforeTokenTransfer(address(0), account, amount);
 
-        RollupStateContext memory ctx;
-        ctx._state = _balanceState;
-        _totalSupply = _totalSupply.add(amount);
-        _balances.set(
-            ctx,
-            _balanceTag,
-            account,
-            _balances.get(account).add(amount)
-        );
+        RollupStateContext memory ctx = getContext();
+        _totalSupply.set(ctx, _totalSupplyTag, _totalSupply.get().add(amount));
+        _balances.add(ctx, _balanceTag, account, amount);
         emit Transfer(address(0), account, amount);
-        _balanceState = ctx._state;
+        saveContext(ctx);
     }
 
     function _burn(address account, uint256 amount) internal virtual override {
@@ -85,24 +67,21 @@ contract RollupERC20 is RollupSDK, ERC20PresetMinterPauser {
 
         _beforeTokenTransfer(account, address(0), amount);
 
-        RollupStateContext memory ctx;
-        ctx._state = _balanceState;
-        _balances.set(
+        RollupStateContext memory ctx = getContext();
+        _balances.sub(
             ctx,
             _balanceTag,
             account,
-            _balances.get(account).sub(
-                amount,
-                "ERC20: burn amount exceeds balance"
-            )
+            amount,
+            "ERC20: burn amount exceeds balance"
         );
-        _totalSupply = _totalSupply.sub(amount);
+        _totalSupply.sub(ctx, _totalSupplyTag, amount);
         emit Transfer(account, address(0), amount);
-        _balanceState = ctx._state;
+        saveContext(ctx);
     }
 
     function totalSupply() public view virtual override returns (uint256) {
-        return _totalSupply;
+        return _totalSupply.get();
     }
 
     function balanceOf(address account)
@@ -115,26 +94,38 @@ contract RollupERC20 is RollupSDK, ERC20PresetMinterPauser {
         return _balances.get(account);
     }
 
-    function rollupToOtherChain(uint8 targetDomainId) public {
+    function rollupToOtherChain(uint8 targetDomainId, bytes32 resourceID)
+        public
+    {
         require(
             hasRole(DEFAULT_ADMIN_ROLE, _msgSender()),
             "RollupERC20: must have admin role to terminate"
         );
         pause();
-        executeRollupMsgTo(targetDomainId, _batchSize);
+        executeRollupMsgTo(targetDomainId, resourceID, _batchSize);
     }
 
     // called by RollupSDK
     function recoverRollupStateMap(
         uint16 tag,
         RollupMapMsg[] memory entries,
-        bool
+        uint256
     ) internal virtual override {
         if (tag == _balanceTag) {
             for (uint256 j = 0; j < entries.length; j++) {
                 address account = abi.decode(entries[j].key, (address));
                 uint256 amount = abi.decode(entries[j].value, (uint256));
                 _mint(account, amount);
+            }
+        } else if (tag == _totalSupplyTag) {
+            for (uint256 j = 0; j < entries.length; j++) {
+                RollupStateContext memory ctx = getContext();
+                _totalSupply.add(
+                    ctx,
+                    _totalSupplyTag,
+                    abi.decode(entries[j].value, (uint256))
+                );
+                saveContext(ctx);
             }
         }
     }

@@ -4,7 +4,7 @@ pragma experimental ABIEncoderV2;
 
 struct RollupStateContext {
     bytes32 _state;
-    RollupMsg[] _msgs;
+    uint256 _startBlock;
 }
 
 enum RollupMsgType {
@@ -30,4 +30,12 @@ struct RollupState {
     RollupStateType ty;
     uint16 tag;
     bytes records;
+}
+
+struct RollupProposal {
+    uint8 originDomainID;
+    uint64 nonce;
+    bytes32 stateRootHash;
+    bytes32 msgRootHash;
+    uint256 totalBatch;
 }

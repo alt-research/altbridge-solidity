@@ -8,12 +8,11 @@ import "../utils/RollupTypes.sol";
     @title Interface for handler contracts that support deposits and deposit executions.
     @author ChainSafe Systems.
  */
-interface IRollupSender {
-    function executeRollupMsgTo(
-        uint8 destDomainID,
-        bytes32 resourceID,
-        uint64 batchSize,
-        uint256 startBlock,
-        bytes32 state
+interface IRollupReceiver {
+    function recoverRollupProposal(
+        RollupProposal memory proposal,
+        uint256 batchIdx,
+        bytes memory states,
+        bytes32[] calldata proof
     ) external;
 }

@@ -6,8 +6,10 @@ import "./utils/AccessControl.sol";
 import "./utils/Pausable.sol";
 import "./utils/SafeMath.sol";
 import "./utils/SafeCast.sol";
-import "./utils/BaseRollupBridge.sol";
+import "./utils/RollupableLib.sol";
 import "./interfaces/IRollupSender.sol";
+import "./interfaces/IRollupReceiver.sol";
+import "./interfaces/IRollupHandler.sol";
 import "./interfaces/IDepositExecute.sol";
 import "./interfaces/IRollup.sol";
 import "./interfaces/IERCHandler.sol";
@@ -17,25 +19,31 @@ import "./interfaces/IGenericHandler.sol";
     @title Facilitates deposits, creation and voting of deposit proposals, and deposit executions.
     @author ChainSafe Systems.
  */
-contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupSender {
+contract Bridge is Pausable, AccessControl, SafeMath, IRollupSender {
     using SafeCast for *;
 
     // Limit relayers number because proposal can fit only so much votes
-    uint256 constant public MAX_RELAYERS = 200;
-    uint256 constant public MAX_ROLLUPERS = 10;
+    uint256 public constant MAX_RELAYERS = 200;
+    uint256 public constant MAX_ROLLUPERS = 10;
 
-    uint8   public _domainID;
-    uint8   public _relayerThreshold;
+    uint8 public _domainID;
+    uint8 public _relayerThreshold;
     uint128 public _fee;
-    uint40  public _expiry;
+    uint40 public _expiry;
 
-    enum ProposalStatus {Inactive, Active, Passed, Executed, Cancelled}
+    enum ProposalStatus {
+        Inactive,
+        Active,
+        Passed,
+        Executed,
+        Cancelled
+    }
 
     struct Proposal {
         ProposalStatus _status;
-        uint200 _yesVotes;      // bitmap, 200 maximum votes
-        uint8   _yesVotesTotal;
-        uint40  _proposedBlock; // 1099511627775 maximum block
+        uint200 _yesVotes; // bitmap, 200 maximum votes
+        uint8 _yesVotesTotal;
+        uint40 _proposedBlock; // 1099511627775 maximum block
     }
 
     // destinationDomainID => number of deposits
@@ -53,28 +61,34 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
     event RolluperAdded(address rolluper);
     event RolluperRemoved(address rolluper);
     event Deposit(
-        uint8   destinationDomainID,
+        uint8 destinationDomainID,
         bytes32 resourceID,
-        uint64  depositNonce,
+        uint64 depositNonce,
         address indexed user,
         bytes data,
         bytes handlerResponse
     );
     event ProposalEvent(
-        uint8          originDomainID,
-        bytes32        resourceID,
-        uint64         depositNonce,
+        uint8 originDomainID,
+        bytes32 resourceID,
+        uint64 depositNonce,
         ProposalStatus status,
         bytes32 dataHash
     );
     event ProposalVote(
-        uint8   originDomainID,
-        uint64  depositNonce,
+        uint8 originDomainID,
+        uint64 depositNonce,
         ProposalStatus status,
         bytes32 dataHash
     );
-    event FailedHandlerExecution(
-        bytes lowLevelData
+    event FailedHandlerExecution(bytes lowLevelData);
+    event ExecRollup(
+        uint8 destDomainID,
+        bytes32 resourceID,
+        uint64 nonce,
+        uint64 batchSize,
+        uint256 startBlock,
+        bytes32 proof
     );
 
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
@@ -101,28 +115,46 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
     }
 
     function _onlyAdminOrRelayer() private view {
-        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || hasRole(RELAYER_ROLE, msg.sender),
-            "sender is not relayer or admin");
+        require(
+            hasRole(DEFAULT_ADMIN_ROLE, msg.sender) ||
+                hasRole(RELAYER_ROLE, msg.sender),
+            "sender is not relayer or admin"
+        );
     }
 
     function _onlyAdmin() private view {
-        require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "sender doesn't have admin role");
+        require(
+            hasRole(DEFAULT_ADMIN_ROLE, msg.sender),
+            "sender doesn't have admin role"
+        );
     }
 
     function _onlyRelayers() private view {
-        require(hasRole(RELAYER_ROLE, msg.sender), "sender doesn't have relayer role");
+        require(
+            hasRole(RELAYER_ROLE, msg.sender),
+            "sender doesn't have relayer role"
+        );
     }
 
     function _onlyRollupers() private view {
-        require(hasRole(ROLLUPER_ROLE, msg.sender), "sender doesn't have rolluper role");
+        require(
+            hasRole(ROLLUPER_ROLE, msg.sender),
+            "sender doesn't have rolluper role"
+        );
     }
 
-    function _relayerBit(address relayer) private view returns(uint) {
-        return uint(1) << sub(AccessControl.getRoleMemberIndex(RELAYER_ROLE, relayer), 1);
+    function _relayerBit(address relayer) private view returns (uint256) {
+        return
+            uint256(1) <<
+            sub(AccessControl.getRoleMemberIndex(RELAYER_ROLE, relayer), 1);
     }
 
-    function _hasVoted(Proposal memory proposal, address relayer) private view returns(bool) {
-        return (_relayerBit(relayer) & uint(proposal._yesVotes)) > 0;
+    function _hasVoted(Proposal memory proposal, address relayer)
+        private
+        view
+        returns (bool)
+    {
+        return (_relayerBit(relayer) & uint256(proposal._yesVotes)) > 0;
     }
 
     /**
@@ -132,7 +164,13 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @param initialRelayers Addresses that should be initially granted the relayer role.
         @param initialRelayerThreshold Number of votes needed for a deposit proposal to be considered passed.
      */
-    constructor (uint8 domainID, address[] memory initialRelayers, uint256 initialRelayerThreshold, uint256 fee, uint256 expiry) public {
+    constructor(
+        uint8 domainID,
+        address[] memory initialRelayers,
+        uint256 initialRelayerThreshold,
+        uint256 fee,
+        uint256 expiry
+    ) public {
         _domainID = domainID;
         _relayerThreshold = initialRelayerThreshold.toUint8();
         _fee = fee.toUint128();
@@ -152,7 +190,11 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @param dataHash Hash of data to be provided when deposit proposal is executed.
         @param relayer Address to check.
      */
-    function _hasVotedOnProposal(uint72 destNonce, bytes32 dataHash, address relayer) public view returns(bool) {
+    function _hasVotedOnProposal(
+        uint72 destNonce,
+        bytes32 dataHash,
+        address relayer
+    ) public view returns (bool) {
         return _hasVoted(_proposals[destNonce][dataHash], relayer);
     }
 
@@ -170,7 +212,7 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @param newAdmin Address that admin role will be granted to.
      */
     function renounceAdmin(address newAdmin) external onlyAdmin {
-        require(msg.sender != newAdmin, 'Cannot renounce oneself');
+        require(msg.sender != newAdmin, "Cannot renounce oneself");
         grantRole(DEFAULT_ADMIN_ROLE, newAdmin);
         renounceRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
@@ -197,7 +239,10 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @param newThreshold Value {_relayerThreshold} will be changed to.
         @notice Emits {RelayerThresholdChanged} event.
      */
-    function adminChangeRelayerThreshold(uint256 newThreshold) external onlyAdmin {
+    function adminChangeRelayerThreshold(uint256 newThreshold)
+        external
+        onlyAdmin
+    {
         _relayerThreshold = newThreshold.toUint8();
         emit RelayerThresholdChanged(newThreshold);
     }
@@ -210,7 +255,10 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @notice Emits {RelayerAdded} event.
      */
     function adminAddRelayer(address relayerAddress) external {
-        require(!hasRole(RELAYER_ROLE, relayerAddress), "addr already has relayer role!");
+        require(
+            !hasRole(RELAYER_ROLE, relayerAddress),
+            "addr already has relayer role!"
+        );
         require(_totalRelayers() < MAX_RELAYERS, "relayers limit reached");
         grantRole(RELAYER_ROLE, relayerAddress);
         emit RelayerAdded(relayerAddress);
@@ -224,20 +272,29 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @notice Emits {RelayerRemoved} event.
      */
     function adminRemoveRelayer(address relayerAddress) external {
-        require(hasRole(RELAYER_ROLE, relayerAddress), "addr doesn't have relayer role!");
+        require(
+            hasRole(RELAYER_ROLE, relayerAddress),
+            "addr doesn't have relayer role!"
+        );
         revokeRole(RELAYER_ROLE, relayerAddress);
         emit RelayerRemoved(relayerAddress);
     }
 
     function adminAddRolluper(address rolluperAddress) external {
-        require(!hasRole(ROLLUPER_ROLE, rolluperAddress), "addr already has rolluper role!");
+        require(
+            !hasRole(ROLLUPER_ROLE, rolluperAddress),
+            "addr already has rolluper role!"
+        );
         require(_totalRollupers() < MAX_ROLLUPERS, "rollupers limit reached");
         grantRole(ROLLUPER_ROLE, rolluperAddress);
         emit RolluperAdded(rolluperAddress);
     }
 
     function adminRemoveRolluper(address rolluperAddress) external {
-        require(hasRole(ROLLUPER_ROLE, rolluperAddress), "addr doesn't have rolluper role!");
+        require(
+            hasRole(ROLLUPER_ROLE, rolluperAddress),
+            "addr doesn't have rolluper role!"
+        );
         revokeRole(ROLLUPER_ROLE, rolluperAddress);
         emit RolluperRemoved(rolluperAddress);
     }
@@ -250,7 +307,11 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @param resourceID ResourceID to be used when making deposits.
         @param tokenAddress Address of contract to be called when a deposit is made and a deposited is executed.
      */
-    function adminSetResource(address handlerAddress, bytes32 resourceID, address tokenAddress) external onlyAdmin {
+    function adminSetResource(
+        address handlerAddress,
+        bytes32 resourceID,
+        address tokenAddress
+    ) external onlyAdmin {
         _resourceIDToHandlerAddress[resourceID] = handlerAddress;
         IERCHandler handler = IERCHandler(handlerAddress);
         handler.setResource(resourceID, tokenAddress);
@@ -274,7 +335,13 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
     ) external onlyAdmin {
         _resourceIDToHandlerAddress[resourceID] = handlerAddress;
         IGenericHandler handler = IGenericHandler(handlerAddress);
-        handler.setResource(resourceID, contractAddress, depositFunctionSig, depositFunctionDepositerOffset, executeFunctionSig);
+        handler.setResource(
+            resourceID,
+            contractAddress,
+            depositFunctionSig,
+            depositFunctionDepositerOffset,
+            executeFunctionSig
+        );
     }
 
     /**
@@ -283,7 +350,10 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @param handlerAddress Address of handler resource will be set for.
         @param tokenAddress Address of contract to be called when a deposit is made and a deposited is executed.
      */
-    function adminSetBurnable(address handlerAddress, address tokenAddress) external onlyAdmin {
+    function adminSetBurnable(address handlerAddress, address tokenAddress)
+        external
+        onlyAdmin
+    {
         IERCHandler handler = IERCHandler(handlerAddress);
         handler.setBurnable(tokenAddress);
     }
@@ -294,8 +364,14 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @param domainID Domain ID for increasing nonce.
         @param nonce The nonce value to be set.
      */
-    function adminSetDepositNonce(uint8 domainID, uint64 nonce) external onlyAdmin {
-        require(nonce > _depositCounts[domainID], "Does not allow decrements of the nonce");
+    function adminSetDepositNonce(uint8 domainID, uint64 nonce)
+        external
+        onlyAdmin
+    {
+        require(
+            nonce > _depositCounts[domainID],
+            "Does not allow decrements of the nonce"
+        );
         _depositCounts[domainID] = nonce;
     }
 
@@ -310,8 +386,13 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         - _noVotes Number of votes against proposal.
         - _status Current status of proposal.
      */
-    function getProposal(uint8 originDomainID, uint64 depositNonce, bytes32 dataHash) external view returns (Proposal memory) {
-        uint72 nonceAndID = (uint72(depositNonce) << 8) | uint72(originDomainID);
+    function getProposal(
+        uint8 originDomainID,
+        uint64 depositNonce,
+        bytes32 dataHash
+    ) external view returns (Proposal memory) {
+        uint72 nonceAndID = (uint72(depositNonce) << 8) |
+            uint72(originDomainID);
         return _proposals[nonceAndID][dataHash];
     }
 
@@ -319,11 +400,11 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @notice Returns total relayers number.
         @notice Added for backwards compatibility.
      */
-    function _totalRelayers() public view returns (uint) {
+    function _totalRelayers() public view returns (uint256) {
         return AccessControl.getRoleMemberCount(RELAYER_ROLE);
     }
 
-    function _totalRollupers() public view returns (uint) {
+    function _totalRollupers() public view returns (uint256) {
         return AccessControl.getRoleMemberCount(ROLLUPER_ROLE);
     }
 
@@ -342,10 +423,10 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @param handlerAddress Address of handler to withdraw from.
         @param data ABI-encoded withdrawal params relevant to the specified handler.
      */
-    function adminWithdraw(
-        address handlerAddress,
-        bytes memory data
-    ) external onlyAdmin {
+    function adminWithdraw(address handlerAddress, bytes memory data)
+        external
+        onlyAdmin
+    {
         IERCHandler handler = IERCHandler(handlerAddress);
         handler.withdraw(data);
     }
@@ -361,7 +442,11 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         - ERC721Handler: responds with the deposited token metadata acquired by calling a tokenURI method in the token contract.
         - GenericHandler: responds with the raw bytes returned from the call to the target contract.
      */
-    function deposit(uint8 destinationDomainID, bytes32 resourceID, bytes calldata data) external payable whenNotPaused {
+    function deposit(
+        uint8 destinationDomainID,
+        bytes32 resourceID,
+        bytes calldata data
+    ) external payable whenNotPaused {
         require(msg.value == _fee, "Incorrect fee supplied");
 
         address handler = _resourceIDToHandlerAddress[resourceID];
@@ -370,9 +455,20 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         uint64 depositNonce = ++_depositCounts[destinationDomainID];
 
         IDepositExecute depositHandler = IDepositExecute(handler);
-        bytes memory handlerResponse = depositHandler.deposit(resourceID, msg.sender, data);
+        bytes memory handlerResponse = depositHandler.deposit(
+            resourceID,
+            msg.sender,
+            data
+        );
 
-        emit Deposit(destinationDomainID, resourceID, depositNonce, msg.sender, data, handlerResponse);
+        emit Deposit(
+            destinationDomainID,
+            resourceID,
+            depositNonce,
+            msg.sender,
+            data,
+            handlerResponse
+        );
     }
 
     /**
@@ -386,49 +482,86 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @notice Emits {ProposalEvent} event with status indicating the proposal status.
         @notice Emits {ProposalVote} event.
      */
-    function voteProposal(uint8 domainID, uint64 depositNonce, bytes32 resourceID, bytes calldata data) external onlyRelayers whenNotPaused {
+    function voteProposal(
+        uint8 domainID,
+        uint64 depositNonce,
+        bytes32 resourceID,
+        bytes calldata data
+    ) external onlyRelayers whenNotPaused {
         address handler = _resourceIDToHandlerAddress[resourceID];
         uint72 nonceAndID = (uint72(depositNonce) << 8) | uint72(domainID);
         bytes32 dataHash = keccak256(abi.encodePacked(handler, data));
         Proposal memory proposal = _proposals[nonceAndID][dataHash];
 
-        require(_resourceIDToHandlerAddress[resourceID] != address(0), "no handler for resourceID");
+        require(
+            _resourceIDToHandlerAddress[resourceID] != address(0),
+            "no handler for resourceID"
+        );
 
         if (proposal._status == ProposalStatus.Passed) {
             executeProposal(domainID, depositNonce, data, resourceID, true);
             return;
         }
-        
-        require(uint(proposal._status) <= 1, "proposal already executed/cancelled");
+
+        require(
+            uint256(proposal._status) <= 1,
+            "proposal already executed/cancelled"
+        );
         require(!_hasVoted(proposal, msg.sender), "relayer already voted");
 
         if (proposal._status == ProposalStatus.Inactive) {
             proposal = Proposal({
-                _status : ProposalStatus.Active,
-                _yesVotes : 0,
-                _yesVotesTotal : 0,
-                _proposedBlock : uint40(block.number) // Overflow is desired.
+                _status: ProposalStatus.Active,
+                _yesVotes: 0,
+                _yesVotesTotal: 0,
+                _proposedBlock: uint40(block.number) // Overflow is desired.
             });
 
-            emit ProposalEvent(domainID, resourceID, depositNonce, ProposalStatus.Active, dataHash);
-        } else if (uint40(sub(block.number, proposal._proposedBlock)) > _expiry) {
+            emit ProposalEvent(
+                domainID,
+                resourceID,
+                depositNonce,
+                ProposalStatus.Active,
+                dataHash
+            );
+        } else if (
+            uint40(sub(block.number, proposal._proposedBlock)) > _expiry
+        ) {
             // if the number of blocks that has passed since this proposal was
             // submitted exceeds the expiry threshold set, cancel the proposal
             proposal._status = ProposalStatus.Cancelled;
 
-            emit ProposalEvent(domainID, resourceID, depositNonce, ProposalStatus.Cancelled, dataHash);
+            emit ProposalEvent(
+                domainID,
+                resourceID,
+                depositNonce,
+                ProposalStatus.Cancelled,
+                dataHash
+            );
         }
 
         if (proposal._status != ProposalStatus.Cancelled) {
-            proposal._yesVotes = (proposal._yesVotes | _relayerBit(msg.sender)).toUint200();
+            proposal._yesVotes = (proposal._yesVotes | _relayerBit(msg.sender))
+                .toUint200();
             proposal._yesVotesTotal++; // TODO: check if bit counting is cheaper.
 
-            emit ProposalVote(domainID, depositNonce, proposal._status, dataHash);
+            emit ProposalVote(
+                domainID,
+                depositNonce,
+                proposal._status,
+                dataHash
+            );
 
             // Finalize if _relayerThreshold has been reached
             if (proposal._yesVotesTotal >= _relayerThreshold) {
                 proposal._status = ProposalStatus.Passed;
-                emit ProposalEvent(domainID, resourceID, depositNonce, ProposalStatus.Passed, dataHash);
+                emit ProposalEvent(
+                    domainID,
+                    resourceID,
+                    depositNonce,
+                    ProposalStatus.Passed,
+                    dataHash
+                );
             }
         }
         _proposals[nonceAndID][dataHash] = proposal;
@@ -447,19 +580,36 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @notice Proposal must be past expiry threshold.
         @notice Emits {ProposalEvent} event with status {Cancelled}.
      */
-    function cancelProposal(uint8 domainID, bytes32 resourceID, uint64 depositNonce, bytes32 dataHash) public onlyAdminOrRelayer {
+    function cancelProposal(
+        uint8 domainID,
+        bytes32 resourceID,
+        uint64 depositNonce,
+        bytes32 dataHash
+    ) public onlyAdminOrRelayer {
         uint72 nonceAndID = (uint72(depositNonce) << 8) | uint72(domainID);
         Proposal memory proposal = _proposals[nonceAndID][dataHash];
         ProposalStatus currentStatus = proposal._status;
 
-        require(currentStatus == ProposalStatus.Active || currentStatus == ProposalStatus.Passed,
-            "Proposal cannot be cancelled");
-        require(uint40(sub(block.number, proposal._proposedBlock)) > _expiry, "Proposal not at expiry threshold");
+        require(
+            currentStatus == ProposalStatus.Active ||
+                currentStatus == ProposalStatus.Passed,
+            "Proposal cannot be cancelled"
+        );
+        require(
+            uint40(sub(block.number, proposal._proposedBlock)) > _expiry,
+            "Proposal not at expiry threshold"
+        );
 
         proposal._status = ProposalStatus.Cancelled;
         _proposals[nonceAndID][dataHash] = proposal;
 
-        emit ProposalEvent(domainID, resourceID, depositNonce, ProposalStatus.Cancelled, dataHash);
+        emit ProposalEvent(
+            domainID,
+            resourceID,
+            depositNonce,
+            ProposalStatus.Cancelled,
+            dataHash
+        );
     }
 
     /**
@@ -475,13 +625,22 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @notice Emits {ProposalEvent} event with status {Executed}.
         @notice Emits {FailedExecution} event with the failed reason.
      */
-    function executeProposal(uint8 domainID, uint64 depositNonce, bytes calldata data, bytes32 resourceID, bool revertOnFail) public onlyRelayers whenNotPaused {
+    function executeProposal(
+        uint8 domainID,
+        uint64 depositNonce,
+        bytes calldata data,
+        bytes32 resourceID,
+        bool revertOnFail
+    ) public onlyRelayers whenNotPaused {
         address handler = _resourceIDToHandlerAddress[resourceID];
         uint72 nonceAndID = (uint72(depositNonce) << 8) | uint72(domainID);
         bytes32 dataHash = keccak256(abi.encodePacked(handler, data));
         Proposal storage proposal = _proposals[nonceAndID][dataHash];
 
-        require(proposal._status == ProposalStatus.Passed, "Proposal must have Passed status");
+        require(
+            proposal._status == ProposalStatus.Passed,
+            "Proposal must have Passed status"
+        );
 
         proposal._status = ProposalStatus.Executed;
         IDepositExecute depositHandler = IDepositExecute(handler);
@@ -489,15 +648,22 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         if (revertOnFail) {
             depositHandler.executeProposal(resourceID, data);
         } else {
-            try depositHandler.executeProposal(resourceID, data) {
-            } catch (bytes memory lowLevelData) {
+            try depositHandler.executeProposal(resourceID, data) {} catch (
+                bytes memory lowLevelData
+            ) {
                 proposal._status = ProposalStatus.Passed;
                 emit FailedHandlerExecution(lowLevelData);
                 return;
             }
         }
-        
-        emit ProposalEvent(domainID, resourceID, depositNonce, ProposalStatus.Executed, dataHash);
+
+        emit ProposalEvent(
+            domainID,
+            resourceID,
+            depositNonce,
+            ProposalStatus.Executed,
+            dataHash
+        );
     }
 
     /**
@@ -506,7 +672,10 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         @param addrs Array of addresses to transfer {amounts} to.
         @param amounts Array of amonuts to transfer to {addrs}.
      */
-    function transferFunds(address payable[] calldata addrs, uint[] calldata amounts) external onlyAdmin {
+    function transferFunds(
+        address payable[] calldata addrs,
+        uint256[] calldata amounts
+    ) external onlyAdmin {
         for (uint256 i = 0; i < addrs.length; i++) {
             addrs[i].transfer(amounts[i]);
         }
@@ -522,8 +691,15 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         delete _rollupResources[resourceID];
     }
 
-    function rollup(bytes32 resourceID, bytes calldata data) external onlyRollupers whenNotPaused {
-        require(_rollupResources[resourceID], "resourceID is not allowed to rollup");
+    function rollup(bytes32 resourceID, bytes calldata data)
+        external
+        onlyRollupers
+        whenNotPaused
+    {
+        require(
+            _rollupResources[resourceID],
+            "resourceID is not allowed to rollup"
+        );
 
         address handler = _resourceIDToHandlerAddress[resourceID];
         require(handler != address(0), "no handler for resourceID");
@@ -536,36 +712,36 @@ contract Bridge is Pausable, AccessControl, SafeMath, BaseRollupBridge, IRollupS
         uint8 destDomainID,
         bytes32 resourceID,
         uint64 batchSize,
-        bytes32 proof
+        uint256 startBlock,
+        bytes32 state
     ) external override whenNotPaused {
         require(
             _resourceIDToHandlerAddress[resourceID] != address(0),
             "no handler for resourceID"
         );
         uint64 nonce = ++_depositCounts[destDomainID];
-        _executeRollupMsgTo(destDomainID, resourceID, nonce, batchSize, proof);
+        emit ExecRollup(destDomainID, resourceID, nonce, batchSize, startBlock, state);
     }
 
-    function verifyRollupMsg(
+    function recoverRollupState(
         uint8 originDomainID,
         bytes32 resourceID,
         uint64 nonce,
-        bytes32 msgRootHash,
         uint256 batchIdx,
         bytes calldata states,
-        bytes32[] calldata _proof
-    ) override public whenNotPaused returns (bool passed, bool isEnd) {
+        bytes32[] calldata proof
+    ) public whenNotPaused {
         address handlerAddress = _resourceIDToHandlerAddress[resourceID];
         require(handlerAddress != address(0), "no handler for resourceID");
-        return
-            IRollupSender(handlerAddress).verifyRollupMsg(
-                originDomainID,
-                resourceID,
-                nonce,
-                msgRootHash,
-                batchIdx,
-                states,
-                _proof
-            );
+        RollupProposal memory proposal;
+        address receiver;
+        (proposal, receiver) = IRollupHandler(handlerAddress)
+            .fetchRollupProposal(originDomainID, resourceID, nonce);
+        IRollupReceiver(receiver).recoverRollupProposal(
+            proposal,
+            batchIdx,
+            states,
+            proof
+        );
     }
 }
