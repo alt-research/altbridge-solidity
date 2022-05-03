@@ -39,15 +39,16 @@ contract RollupExample is RollupSDK {
     }
 
     function transfer(uint256 tokenId, address to) public {
+        RollupStateContext memory ctx = getContext();
+        
         if (msg.sender != admin_) {
             require(!pause_, "contract is paused");
             require(
-                owner_.getAsAddress(bytes32(tokenId)) == msg.sender,
+                owner_.getAsAddress(ctx, bytes32(tokenId)) == msg.sender,
                 "token not owned"
             );
         }
 
-        RollupStateContext memory ctx = getContext();
         owner_.set(ctx, _ownerTag, bytes32(tokenId), abi.encode(to));
         saveContext(ctx);
     }

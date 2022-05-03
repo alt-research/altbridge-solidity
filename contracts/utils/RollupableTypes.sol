@@ -15,7 +15,7 @@ library RollupableTypes {
 
     // ====================================== Uint256 ======================================
     struct Uint256 {
-        uint256 _value;
+        mapping(uint8 => uint256) _value;
     }
 
     function set(
@@ -24,7 +24,7 @@ library RollupableTypes {
         uint16 tag,
         uint256 value
     ) internal {
-        v._value = value;
+        v._value[ctx._epoch] = value;
         ctx.emitValue(tag, abi.encode(value));
     }
 
@@ -34,8 +34,8 @@ library RollupableTypes {
         uint16 tag,
         uint256 amount
     ) internal {
-        uint256 value = v._value.sub(amount);
-        v._value = value;
+        uint256 value = v._value[ctx._epoch].sub(amount);
+        v._value[ctx._epoch] = value;
         ctx.emitValue(tag, abi.encode(value));
     }
 
@@ -45,19 +45,23 @@ library RollupableTypes {
         uint16 tag,
         uint256 amount
     ) internal {
-        uint256 value = v._value.add(amount);
-        v._value = value;
+        uint256 value = v._value[ctx._epoch].add(amount);
+        v._value[ctx._epoch] = value;
         ctx.emitValue(tag, abi.encode(value));
     }
 
-    function get(Uint256 storage v) internal view returns (uint256) {
-        return v._value;
+    function get(Uint256 storage v, RollupStateContext memory ctx)
+        internal
+        view
+        returns (uint256)
+    {
+        return v._value[ctx._epoch];
     }
 
     // ====================================== Map ======================================
 
     struct Map {
-        mapping(bytes32 => bytes) _map;
+        mapping(uint8 => mapping(bytes32 => bytes)) _map;
     }
 
     function set(
@@ -67,7 +71,7 @@ library RollupableTypes {
         bytes32 key,
         bytes memory value
     ) internal {
-        map._map[key] = value;
+        map._map[ctx._epoch][key] = value;
         ctx.emitKv(tag, abi.encode(key), value);
     }
 
@@ -77,36 +81,36 @@ library RollupableTypes {
         uint16 tag,
         bytes32 key
     ) internal {
-        delete map._map[key];
+        delete map._map[ctx._epoch][key];
         ctx.emitKey(tag, abi.encode(key));
     }
 
-    function get(Map storage map, bytes32 key)
-        internal
-        view
-        returns (bytes memory)
-    {
-        return map._map[key];
+    function get(
+        Map storage map,
+        RollupStateContext memory ctx,
+        bytes32 key
+    ) internal view returns (bytes memory) {
+        return map._map[ctx._epoch][key];
     }
 
-    function getAsAddress(Map storage map, bytes32 key)
-        internal
-        view
-        returns (address val)
-    {
-        bytes memory out = map._map[key];
+    function getAsAddress(
+        Map storage map,
+        RollupStateContext memory ctx,
+        bytes32 key
+    ) internal view returns (address val) {
+        bytes memory out = map._map[ctx._epoch][key];
         if (out.length > 0) {
-            (val) = abi.decode(map._map[key], (address));
+            (val) = abi.decode(map._map[ctx._epoch][key], (address));
         }
         return val;
     }
 
-    function getAsString(Map storage map, bytes32 key)
-        internal
-        view
-        returns (string memory val)
-    {
-        return string(map._map[key]);
+    function getAsString(
+        Map storage map,
+        RollupStateContext memory ctx,
+        bytes32 key
+    ) internal view returns (string memory val) {
+        return string(map._map[ctx._epoch][key]);
     }
 
     function setAsString(
@@ -116,14 +120,14 @@ library RollupableTypes {
         bytes32 key,
         string memory value
     ) internal {
-        map._map[key] = bytes(value);
+        map._map[ctx._epoch][key] = bytes(value);
         ctx.emitKv(tag, abi.encode(key), bytes(value));
     }
 
     // ====================================== AddressUint256Map ======================================
 
     struct AddressUint256Map {
-        mapping(address => uint256) _map;
+        mapping(uint8 => mapping(address => uint256)) _map;
     }
 
     function set(
@@ -133,7 +137,7 @@ library RollupableTypes {
         address key,
         uint256 value
     ) internal {
-        map._map[key] = value;
+        map._map[ctx._epoch][key] = value;
         ctx.emitKv(tag, abi.encode(key), abi.encode(value));
     }
 
@@ -144,8 +148,8 @@ library RollupableTypes {
         address key,
         uint256 amount
     ) internal {
-        uint256 value = map._map[key].add(amount);
-        map._map[key] = value;
+        uint256 value = map._map[ctx._epoch][key].add(amount);
+        map._map[ctx._epoch][key] = value;
         ctx.emitKv(tag, abi.encode(key), abi.encode(value));
     }
 
@@ -157,31 +161,31 @@ library RollupableTypes {
         uint256 amount,
         string memory errorMessage
     ) internal {
-        uint256 value = map._map[key].sub(amount, errorMessage);
-        map._map[key] = value;
+        uint256 value = map._map[ctx._epoch][key].sub(amount, errorMessage);
+        map._map[ctx._epoch][key] = value;
         ctx.emitKv(tag, abi.encode(key), abi.encode(value));
     }
 
-    function get(AddressUint256Map storage map, address key)
-        internal
-        view
-        returns (uint256)
-    {
-        return map._map[key];
+    function get(
+        AddressUint256Map storage map,
+        RollupStateContext memory ctx,
+        address key
+    ) internal view returns (uint256) {
+        return map._map[ctx._epoch][key];
     }
 
     // ====================================== AddressEnumerableSetMap ======================================
 
     struct AddressEnumerableUintSetMap {
-        mapping(address => EnumerableSet.UintSet) _map;
+        mapping(uint8 => mapping(address => EnumerableSet.UintSet)) _map;
     }
 
-    function length(AddressEnumerableUintSetMap storage map, address key)
-        internal
-        view
-        returns (uint256)
-    {
-        return map._map[key].length();
+    function length(
+        AddressEnumerableUintSetMap storage map,
+        RollupStateContext memory ctx,
+        address key
+    ) internal view returns (uint256) {
+        return map._map[ctx._epoch][key].length();
     }
 
     function add(
@@ -191,7 +195,7 @@ library RollupableTypes {
         address key,
         uint256 value
     ) internal {
-        map._map[key].add(value);
+        map._map[ctx._epoch][key].add(value);
         ctx.emitKv(tag, abi.encode(key, value), abi.encode(1));
     }
 
@@ -202,38 +206,39 @@ library RollupableTypes {
         address key,
         uint256 value
     ) internal {
-        map._map[key].remove(value);
+        map._map[ctx._epoch][key].remove(value);
         ctx.emitKv(tag, abi.encode(key, value), abi.encode(0));
     }
 
     function at(
         AddressEnumerableUintSetMap storage map,
+        RollupStateContext memory ctx,
         address key,
         uint256 index
     ) internal view returns (uint256) {
-        return map._map[key].at(index);
+        return map._map[ctx._epoch][key].at(index);
     }
 
     // ============
 
     struct EnumerableUintToAddressMap {
-        EnumerableMap.UintToAddressMap _map;
+        mapping(uint8 => EnumerableMap.UintToAddressMap) _map;
     }
 
-    function at(EnumerableUintToAddressMap storage map, uint256 index)
-        internal
-        view
-        returns (uint256, address)
-    {
-        return map._map.at(index);
+    function at(
+        EnumerableUintToAddressMap storage map,
+        RollupStateContext memory ctx,
+        uint256 index
+    ) internal view returns (uint256, address) {
+        return map._map[ctx._epoch].at(index);
     }
 
-    function contains(EnumerableUintToAddressMap storage map, uint256 key)
-        internal
-        view
-        returns (bool)
-    {
-        return map._map.contains(key);
+    function contains(
+        EnumerableUintToAddressMap storage map,
+        RollupStateContext memory ctx,
+        uint256 key
+    ) internal view returns (bool) {
+        return map._map[ctx._epoch].contains(key);
     }
 
     function set(
@@ -243,24 +248,24 @@ library RollupableTypes {
         uint256 key,
         address value
     ) internal {
-        map._map.set(key, value);
+        map._map[ctx._epoch].set(key, value);
         ctx.emitKv(tag, abi.encode(key), abi.encode(value));
     }
 
     function get(
         EnumerableUintToAddressMap storage map,
+        RollupStateContext memory ctx,
         uint256 key,
         string memory errorMessage
     ) internal view returns (address) {
-        return map._map.get(key, errorMessage);
+        return map._map[ctx._epoch].get(key, errorMessage);
     }
 
-    function length(EnumerableUintToAddressMap storage map)
-        internal
-        view
-        returns (uint256)
-    {
-        return map._map.length();
+    function length(
+        EnumerableUintToAddressMap storage map,
+        RollupStateContext memory ctx
+    ) internal view returns (uint256) {
+        return map._map[ctx._epoch].length();
     }
 
     function remove(
@@ -269,7 +274,7 @@ library RollupableTypes {
         uint16 tag,
         uint256 key
     ) internal {
-        map._map.remove(key);
+        map._map[ctx._epoch].remove(key);
         ctx.emitKey(tag, abi.encode(key));
     }
 }

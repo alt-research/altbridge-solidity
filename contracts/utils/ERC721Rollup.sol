@@ -3,9 +3,10 @@ pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
 import "../utils/RollupSDK.sol";
-import "@openzeppelin/contracts/presets/ERC721PresetMinterPauserAutoId.sol";
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 
-contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
+abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
     uint16 constant _holderTokensTag = 0;
     uint16 constant _tokenOwnersTag = 1;
     uint16 constant _tokenURIsTag = 2;
@@ -22,16 +23,7 @@ contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
     /**
      * @dev Allows overriding the name, symbol & decimal of the base ERC20 contract
      */
-    constructor(
-        address bridgeAddress,
-        string memory name,
-        string memory symbol,
-        string memory baseURI
-    )
-        public
-        ERC721PresetMinterPauserAutoId(name, symbol, baseURI)
-        RollupSDK(bridgeAddress)
-    {}
+    constructor(address bridgeAddress) public RollupSDK(bridgeAddress) {}
 
     /**
      * @dev See {IERC721-balanceOf}.
@@ -47,7 +39,7 @@ contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
             owner != address(0),
             "ERC721: balance query for the zero address"
         );
-        return _holderTokens.length(owner);
+        return _holderTokens.length(getContext(), owner);
     }
 
     /**
@@ -62,6 +54,7 @@ contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
     {
         return
             _tokenOwners.get(
+                getContext(),
                 tokenId,
                 "ERC721: owner query for nonexistent token"
             );
@@ -82,7 +75,9 @@ contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
             "ERC721Metadata: URI query for nonexistent token"
         );
 
-        string memory _tokenURI = _tokenURIs.getAsString(bytes32(tokenId));
+        RollupStateContext memory ctx = getContext();
+
+        string memory _tokenURI = _tokenURIs.getAsString(ctx, bytes32(tokenId));
         string memory base = baseURI();
 
         // If there is no base URI, return the token URI.
@@ -107,7 +102,7 @@ contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
         override
         returns (uint256)
     {
-        return _holderTokens.at(owner, index);
+        return _holderTokens.at(getContext(), owner, index);
     }
 
     /**
@@ -115,7 +110,7 @@ contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
      */
     function totalSupply() public view virtual override returns (uint256) {
         // _tokenOwners are indexed by tokenIds, so .length() returns the number of tokenIds
-        return _tokenOwners.length();
+        return _tokenOwners.length(getContext());
     }
 
     /**
@@ -128,7 +123,7 @@ contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
         override
         returns (uint256)
     {
-        (uint256 tokenId, ) = _tokenOwners.at(index);
+        (uint256 tokenId, ) = _tokenOwners.at(getContext(), index);
         return tokenId;
     }
 
@@ -147,7 +142,7 @@ contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
         override
         returns (bool)
     {
-        return _tokenOwners.contains(tokenId);
+        return _tokenOwners.contains(getContext(), tokenId);
     }
 
     /**
@@ -162,16 +157,25 @@ contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
      *
      * Emits a {Transfer} event.
      */
-    function _mint(address to, uint256 tokenId) internal virtual override {
+    function _mint(
+        RollupStateContext memory ctx,
+        address to,
+        uint256 tokenId
+    ) internal virtual {
         require(to != address(0), "ERC721: mint to the zero address");
         require(!_exists(tokenId), "ERC721: token already minted");
 
         _beforeTokenTransfer(address(0), to, tokenId);
-        RollupStateContext memory ctx = getContext();
 
         _holderTokens.add(ctx, _holderTokensTag, to, tokenId);
         _tokenOwners.set(ctx, _tokenOwnersTag, tokenId, to);
         emit Transfer(address(0), to, tokenId);
+    }
+
+    function _mint(address to, uint256 tokenId) internal virtual override {
+        RollupStateContext memory ctx = getContext();
+        _mint(ctx, to, tokenId);
+        saveContext(ctx);
     }
 
     /**
@@ -194,7 +198,7 @@ contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
         _approve(address(0), tokenId);
 
         // Clear metadata (if any)
-        if (_tokenURIs.get(bytes32(tokenId)).length != 0) {
+        if (_tokenURIs.get(ctx, bytes32(tokenId)).length != 0) {
             _tokenURIs.remove(ctx, _tokenURIsTag, bytes32(tokenId));
         }
 
@@ -270,9 +274,8 @@ contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
     {
         require(
             hasRole(DEFAULT_ADMIN_ROLE, _msgSender()),
-            "RollupERC20: must have admin role to terminate"
+            "ERC721Rollup: must have admin role to terminate"
         );
-        pause();
         executeRollupMsgTo(targetDomainId, resourceID, _batchSize);
     }
 
@@ -283,19 +286,20 @@ contract RollupERC721 is RollupSDK, ERC721PresetMinterPauserAutoId {
         uint256
     ) internal virtual override {
         if (tag == _holderTokensTag) {
+            RollupStateContext memory ctx = getContext();
             for (uint256 j = 0; j < entries.length; j++) {
-                if (abi.decode(entries[j].value, (uint256)) == 1) {
+                bool isEnable = abi.decode(entries[j].value, (uint256)) == 1;
+                if (isEnable) {
                     address account;
                     uint256 tokenId;
                     (account, tokenId) = abi.decode(
                         entries[j].key,
                         (address, uint256)
                     );
-                    _mint(account, tokenId);
+                    _mint(ctx, account, tokenId);
                 }
             }
-        } else if (tag == _tokenURIsTag) {
-            
-        }
+            saveContext(ctx);
+        } else if (tag == _tokenURIsTag) {}
     }
 }

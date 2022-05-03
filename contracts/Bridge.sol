@@ -715,19 +715,28 @@ contract Bridge is Pausable, AccessControl, SafeMath, IRollupSender {
         uint256 startBlock,
         bytes32 state
     ) external override whenNotPaused {
-        require(
-            _resourceIDToHandlerAddress[resourceID] != address(0),
-            "no handler for resourceID"
-        );
+        address handlerAddress = _resourceIDToHandlerAddress[resourceID];
+        require(handlerAddress != address(0), "no handler for resourceID");
         uint64 nonce = ++_depositCounts[destDomainID];
-        emit ExecRollup(destDomainID, resourceID, nonce, batchSize, startBlock, state);
+        require(
+            IRollupHandler(handlerAddress).getAddressByResourceID(resourceID) ==
+                msg.sender,
+            "resourceID not match the sender"
+        );
+        emit ExecRollup(
+            destDomainID,
+            resourceID,
+            nonce,
+            batchSize,
+            startBlock,
+            state
+        );
     }
 
     function recoverRollupState(
         uint8 originDomainID,
         bytes32 resourceID,
         uint64 nonce,
-        uint256 batchIdx,
         bytes calldata states,
         bytes32[] calldata proof
     ) public whenNotPaused {
@@ -739,7 +748,6 @@ contract Bridge is Pausable, AccessControl, SafeMath, IRollupSender {
             .fetchRollupProposal(originDomainID, resourceID, nonce);
         IRollupReceiver(receiver).recoverRollupProposal(
             proposal,
-            batchIdx,
             states,
             proof
         );

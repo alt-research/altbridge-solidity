@@ -11,7 +11,6 @@ import "../utils/RollupTypes.sol";
 interface IRollupReceiver {
     function recoverRollupProposal(
         RollupProposal memory proposal,
-        uint256 batchIdx,
         bytes memory states,
         bytes32[] calldata proof
     ) external;

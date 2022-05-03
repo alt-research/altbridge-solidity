@@ -84,4 +84,12 @@ contract RollupHandler is
         proposal.totalBatch = md.totalBatch;
         return (proposal, receiverAddress);
     }
+
+    function getAddressByResourceID(bytes32 resourceID)
+        external
+        override
+        returns (address)
+    {
+        return _resourceIDToTokenContractAddress[resourceID];
+    }
 }

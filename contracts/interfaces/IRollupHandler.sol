@@ -11,4 +11,5 @@ interface IRollupHandler {
         bytes32 resourceID,
         uint64 nonce
     ) external returns (RollupProposal memory proposal, address receiver);
+    function getAddressByResourceID(bytes32 resourceID) external returns (address);
 }

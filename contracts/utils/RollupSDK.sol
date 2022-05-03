@@ -9,12 +9,13 @@ import "../utils/RollupableTypes.sol";
 
 contract RollupSDK is IRollupReceiver {
     address public immutable _bridgeAddress;
-    uint256 private epoch_;
+    uint8 private _epoch;
     mapping(uint72 => uint256) _executeBatchNonce;
-    bool private unused_;
+    bool private _unused;
     bytes32 private _state;
     uint256 private _startBlock;
     event BlockNumber(uint256);
+    event NewEpoch(uint8);
 
     constructor(address bridgeAddress) public {
         _bridgeAddress = bridgeAddress;
@@ -22,7 +23,6 @@ contract RollupSDK is IRollupReceiver {
 
     function recoverRollupProposal(
         RollupProposal memory proposal,
-        uint256 batchIdx,
         bytes memory states,
         bytes32[] calldata proof
     ) external override {
@@ -30,25 +30,30 @@ contract RollupSDK is IRollupReceiver {
         uint72 nonceAndID = (uint72(proposal.nonce) << 8) |
             uint72(proposal.originDomainID);
         require(
-            _executeBatchNonce[nonceAndID] == batchIdx,
-            "batchIdx not expected"
+            RollupableLib.verifyMerkleProof(
+                proof,
+                proposal.stateRootHash,
+                keccak256(states)
+            ),
+            "verify fail"
         );
         RollupState memory rollupStates;
         rollupStates = abi.decode(states, (RollupState));
+        require(
+            _executeBatchNonce[nonceAndID] == rollupStates.idx,
+            "batchIdx not expected"
+        );
         _executeBatchNonce[nonceAndID]++;
-        recoverRollupState(rollupStates, batchIdx);
+        recoverRollupState(rollupStates);
     }
 
-    function recoverRollupState(RollupState memory state, uint256 batchIdx)
-        internal
-        virtual
-    {
+    function recoverRollupState(RollupState memory state) internal virtual {
         if (state.ty == RollupStateType.Map) {
             RollupMapMsg[] memory entries = abi.decode(
                 state.records,
                 (RollupMapMsg[])
             );
-            recoverRollupStateMap(state.tag, entries, batchIdx);
+            recoverRollupStateMap(state.tag, entries, state.idx);
         }
     }
 
@@ -58,7 +63,7 @@ contract RollupSDK is IRollupReceiver {
         uint256
     ) internal virtual {
         require(false, "handleRollupStateMap is not implemented");
-        unused_ = true; // ignore the warning: Function state mutability can be restricted to pure
+        _unused = true; // ignore the warning: Function state mutability can be restricted to pure
     }
 
     function executeRollupMsgTo(
@@ -74,12 +79,16 @@ contract RollupSDK is IRollupReceiver {
             _state
         );
         _startBlock = 0;
+        uint8 epoch = _epoch + 1;
+        emit NewEpoch(epoch);
+        _epoch = epoch;
         _state = bytes32(0);
     }
 
     function getContext() internal view returns (RollupStateContext memory) {
         RollupStateContext memory ctx;
         ctx._state = _state;
+        ctx._epoch = _epoch;
         if (ctx._state == bytes32(0)) {
             ctx._startBlock = block.number;
         }
@@ -88,6 +97,7 @@ contract RollupSDK is IRollupReceiver {
 
     function saveContext(RollupStateContext memory ctx) internal {
         _state = ctx._state;
+        _epoch = ctx._epoch;
         if (ctx._startBlock > 0) {
             _startBlock = ctx._startBlock;
             emit BlockNumber(ctx._startBlock);

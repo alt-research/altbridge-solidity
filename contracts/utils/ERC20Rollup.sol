@@ -3,13 +3,13 @@ pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
 import "../utils/RollupSDK.sol";
-import "@openzeppelin/contracts/presets/ERC20PresetMinterPauser.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "../utils/RollupableTypes.sol";
 
-contract RollupERC20 is RollupSDK, ERC20PresetMinterPauser {
+abstract contract ERC20Rollup is RollupSDK, AccessControl, ERC20 {
     uint16 constant _balanceTag = 0;
     uint16 constant _totalSupplyTag = 1;
-    uint64 constant _batchSize = 100;
     using RollupableTypes for RollupableTypes.AddressUint256Map;
     using RollupableTypes for RollupableTypes.Uint256;
 
@@ -19,20 +19,13 @@ contract RollupERC20 is RollupSDK, ERC20PresetMinterPauser {
     /**
      * @dev Allows overriding the name, symbol & decimal of the base ERC20 contract
      */
-    constructor(
-        address bridgeAddress,
-        string memory name,
-        string memory symbol,
-        uint8 decimals
-    ) public ERC20PresetMinterPauser(name, symbol) RollupSDK(bridgeAddress) {
-        _setupDecimals(decimals);
-    }
+    constructor(address bridgeAddress) public RollupSDK(bridgeAddress) {}
 
     function _transfer(
         address sender,
         address recipient,
         uint256 amount
-    ) internal virtual override {
+    ) internal virtual override(ERC20) {
         require(sender != address(0), "ERC20: transfer from the zero address");
         require(recipient != address(0), "ERC20: transfer to the zero address");
 
@@ -50,19 +43,35 @@ contract RollupERC20 is RollupSDK, ERC20PresetMinterPauser {
         saveContext(ctx);
     }
 
-    function _mint(address account, uint256 amount) internal virtual override {
+    function _mint(address account, uint256 amount)
+        internal
+        virtual
+        override(ERC20)
+    {
+        RollupStateContext memory ctx = getContext();
+        _mint(ctx, account, amount);
+        saveContext(ctx);
+    }
+
+    function _mint(
+        RollupStateContext memory ctx,
+        address account,
+        uint256 amount
+    ) internal virtual {
         require(account != address(0), "ERC20: mint to the zero address");
 
         _beforeTokenTransfer(address(0), account, amount);
 
-        RollupStateContext memory ctx = getContext();
-        _totalSupply.set(ctx, _totalSupplyTag, _totalSupply.get().add(amount));
+        _totalSupply.add(ctx, _totalSupplyTag, amount);
         _balances.add(ctx, _balanceTag, account, amount);
         emit Transfer(address(0), account, amount);
-        saveContext(ctx);
     }
 
-    function _burn(address account, uint256 amount) internal virtual override {
+    function _burn(address account, uint256 amount)
+        internal
+        virtual
+        override(ERC20)
+    {
         require(account != address(0), "ERC20: burn from the zero address");
 
         _beforeTokenTransfer(account, address(0), amount);
@@ -80,29 +89,36 @@ contract RollupERC20 is RollupSDK, ERC20PresetMinterPauser {
         saveContext(ctx);
     }
 
-    function totalSupply() public view virtual override returns (uint256) {
-        return _totalSupply.get();
+    function totalSupply()
+        public
+        view
+        virtual
+        override(ERC20)
+        returns (uint256)
+    {
+        return _totalSupply.get(getContext());
     }
 
     function balanceOf(address account)
         public
         view
         virtual
-        override
+        override(ERC20)
         returns (uint256)
     {
-        return _balances.get(account);
+        return _balances.get(getContext(), account);
     }
 
-    function rollupToOtherChain(uint8 targetDomainId, bytes32 resourceID)
-        public
-    {
+    function rollupToOtherChain(
+        uint8 targetDomainId,
+        bytes32 resourceID,
+        uint64 batchSize
+    ) public virtual {
         require(
             hasRole(DEFAULT_ADMIN_ROLE, _msgSender()),
-            "RollupERC20: must have admin role to terminate"
+            "ERC20Rollup: must have admin role to terminate"
         );
-        pause();
-        executeRollupMsgTo(targetDomainId, resourceID, _batchSize);
+        executeRollupMsgTo(targetDomainId, resourceID, batchSize);
     }
 
     // called by RollupSDK
@@ -112,21 +128,13 @@ contract RollupERC20 is RollupSDK, ERC20PresetMinterPauser {
         uint256
     ) internal virtual override {
         if (tag == _balanceTag) {
+            RollupStateContext memory ctx = getContext();
             for (uint256 j = 0; j < entries.length; j++) {
                 address account = abi.decode(entries[j].key, (address));
                 uint256 amount = abi.decode(entries[j].value, (uint256));
-                _mint(account, amount);
+                _mint(ctx, account, amount);
             }
-        } else if (tag == _totalSupplyTag) {
-            for (uint256 j = 0; j < entries.length; j++) {
-                RollupStateContext memory ctx = getContext();
-                _totalSupply.add(
-                    ctx,
-                    _totalSupplyTag,
-                    abi.decode(entries[j].value, (uint256))
-                );
-                saveContext(ctx);
-            }
+            saveContext(ctx);
         }
     }
 }
