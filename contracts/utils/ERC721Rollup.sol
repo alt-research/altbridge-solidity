@@ -10,7 +10,6 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
     uint16 constant _holderTokensTag = 0;
     uint16 constant _tokenOwnersTag = 1;
     uint16 constant _tokenURIsTag = 2;
-    uint64 constant _batchSize = 100;
 
     using RollupableTypes for RollupableTypes.AddressEnumerableUintSetMap;
     using RollupableTypes for RollupableTypes.EnumerableUintToAddressMap;
@@ -39,7 +38,7 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
             owner != address(0),
             "ERC721: balance query for the zero address"
         );
-        return _holderTokens.length(getContext(), owner);
+        return _holderTokens.length(getReadContext(), owner);
     }
 
     /**
@@ -54,7 +53,7 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
     {
         return
             _tokenOwners.get(
-                getContext(),
+                getReadContext(),
                 tokenId,
                 "ERC721: owner query for nonexistent token"
             );
@@ -75,7 +74,7 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
             "ERC721Metadata: URI query for nonexistent token"
         );
 
-        RollupStateContext memory ctx = getContext();
+        RollupStateContext memory ctx = getReadContext();
 
         string memory _tokenURI = _tokenURIs.getAsString(ctx, bytes32(tokenId));
         string memory base = baseURI();
@@ -102,7 +101,7 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
         override
         returns (uint256)
     {
-        return _holderTokens.at(getContext(), owner, index);
+        return _holderTokens.at(getReadContext(), owner, index);
     }
 
     /**
@@ -110,7 +109,7 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
      */
     function totalSupply() public view virtual override returns (uint256) {
         // _tokenOwners are indexed by tokenIds, so .length() returns the number of tokenIds
-        return _tokenOwners.length(getContext());
+        return _tokenOwners.length(getReadContext());
     }
 
     /**
@@ -123,7 +122,7 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
         override
         returns (uint256)
     {
-        (uint256 tokenId, ) = _tokenOwners.at(getContext(), index);
+        (uint256 tokenId, ) = _tokenOwners.at(getReadContext(), index);
         return tokenId;
     }
 
@@ -142,7 +141,7 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
         override
         returns (bool)
     {
-        return _tokenOwners.contains(getContext(), tokenId);
+        return _tokenOwners.contains(getReadContext(), tokenId);
     }
 
     /**
@@ -173,7 +172,7 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
     }
 
     function _mint(address to, uint256 tokenId) internal virtual override {
-        RollupStateContext memory ctx = getContext();
+        RollupStateContext memory ctx = getWriteContext();
         _mint(ctx, to, tokenId);
         saveContext(ctx);
     }
@@ -190,7 +189,7 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
      */
     function _burn(uint256 tokenId) internal virtual override {
         address owner = ERC721.ownerOf(tokenId); // internal owner
-        RollupStateContext memory ctx = getContext();
+        RollupStateContext memory ctx = getWriteContext();
 
         _beforeTokenTransfer(owner, address(0), tokenId);
 
@@ -233,7 +232,7 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
         require(to != address(0), "ERC721: transfer to the zero address");
 
         _beforeTokenTransfer(from, to, tokenId);
-        RollupStateContext memory ctx = getContext();
+        RollupStateContext memory ctx = getWriteContext();
 
         // Clear approvals from the previous owner
         _approve(address(0), tokenId);
@@ -264,29 +263,29 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
             _exists(tokenId),
             "ERC721Metadata: URI set of nonexistent token"
         );
-        RollupStateContext memory ctx = getContext();
+        RollupStateContext memory ctx = getWriteContext();
         _tokenURIs.setAsString(ctx, _tokenURIsTag, bytes32(tokenId), _tokenURI);
         saveContext(ctx);
     }
 
-    function rollupToOtherChain(uint8 targetDomainId, bytes32 resourceID)
+    function rollupToOtherChain(uint8 targetDomainId, bytes32 resourceID, uint64 batchSize)
         public
     {
         require(
             hasRole(DEFAULT_ADMIN_ROLE, _msgSender()),
             "ERC721Rollup: must have admin role to terminate"
         );
-        executeRollupMsgTo(targetDomainId, resourceID, _batchSize);
+        executeRollupMsgTo(targetDomainId, resourceID, batchSize);
     }
 
     // called by RollupSDK
-    function recoverRollupStateMap(
-        uint16 tag,
-        RollupMapMsg[] memory entries,
-        uint256
-    ) internal virtual override {
+    function _recoverRollupStateMap(uint16 tag, RollupMapMsg[] memory entries)
+        internal
+        virtual
+        override
+    {
         if (tag == _holderTokensTag) {
-            RollupStateContext memory ctx = getContext();
+            RollupStateContext memory ctx = getWriteContext();
             for (uint256 j = 0; j < entries.length; j++) {
                 bool isEnable = abi.decode(entries[j].value, (uint256)) == 1;
                 if (isEnable) {
@@ -300,6 +299,10 @@ abstract contract ERC721Rollup is RollupSDK, AccessControl, ERC721 {
                 }
             }
             saveContext(ctx);
-        } else if (tag == _tokenURIsTag) {}
+        } else if (tag == _tokenURIsTag) {
+            RollupStateContext memory ctx = getWriteContext();
+            _tokenURIs.recover(ctx, _tokenURIsTag, entries);
+            saveContext(ctx);
+        }
     }
 }

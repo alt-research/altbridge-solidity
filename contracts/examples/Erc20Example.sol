@@ -59,7 +59,21 @@ contract ERC20Example is ERC20Rollup, ERC20PresetMinterPauser {
         return super.balanceOf(account);
     }
 
-    function _beforeTokenTransfer(address from, address to, uint256 amount) internal virtual override(ERC20, ERC20PresetMinterPauser) {
+    function _beforeTokenTransfer(
+        address from,
+        address to,
+        uint256 amount
+    ) internal virtual override(ERC20, ERC20PresetMinterPauser) {
         super._beforeTokenTransfer(from, to, amount);
     }
+
+    function _beforeRecoverRollupState(RollupProposal memory)
+        internal
+        override
+    {}
+
+    function _afterRecoverRollupState(RollupProposal memory)
+        internal
+        override
+    {}
 }

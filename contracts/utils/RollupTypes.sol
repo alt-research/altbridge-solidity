@@ -3,8 +3,10 @@ pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
 struct RollupStateContext {
-    bytes32 _state;
-    uint256 _startBlock;
+    bool _writable;
+    bytes32 _state; // writable
+    uint256 _startBlock; // writable
+    // readable
     uint8 _epoch;
 }
 
@@ -34,10 +36,16 @@ struct RollupState {
     bytes records;
 }
 
+struct RollupStateHeader {
+    RollupStateType ty;
+    uint64 idx;
+    uint16 tag;
+}
+
 struct RollupProposal {
     uint8 originDomainID;
     uint64 nonce;
     bytes32 stateRootHash;
     bytes32 msgRootHash;
-    uint256 totalBatch;
+    uint64 totalBatch;
 }

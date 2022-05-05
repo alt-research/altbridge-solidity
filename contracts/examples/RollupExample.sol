@@ -21,12 +21,12 @@ contract RollupExample is RollupSDK {
         admin_ = msg.sender;
     }
 
-    function recoverRollupStateMap(
-        uint16 tag,
-        RollupMapMsg[] memory entries,
-        uint256
-    ) internal virtual override {
-        RollupStateContext memory ctx = getContext();
+    function _recoverRollupStateMap(uint16 tag, RollupMapMsg[] memory entries)
+        internal
+        virtual
+        override
+    {
+        RollupStateContext memory ctx = getWriteContext();
         if (tag == _ownerTag) {
             for (uint256 j = 0; j < entries.length; j++) {
                 uint256 tokenId = abi.decode(entries[j].key, (uint256));
@@ -39,8 +39,8 @@ contract RollupExample is RollupSDK {
     }
 
     function transfer(uint256 tokenId, address to) public {
-        RollupStateContext memory ctx = getContext();
-        
+        RollupStateContext memory ctx = getWriteContext();
+
         if (msg.sender != admin_) {
             require(!pause_, "contract is paused");
             require(

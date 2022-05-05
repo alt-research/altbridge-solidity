@@ -30,7 +30,7 @@ abstract contract ERC20Rollup is RollupSDK, AccessControl, ERC20 {
         require(recipient != address(0), "ERC20: transfer to the zero address");
 
         _beforeTokenTransfer(sender, recipient, amount);
-        RollupStateContext memory ctx = getContext();
+        RollupStateContext memory ctx = getWriteContext();
         _balances.sub(
             ctx,
             _balanceTag,
@@ -48,7 +48,7 @@ abstract contract ERC20Rollup is RollupSDK, AccessControl, ERC20 {
         virtual
         override(ERC20)
     {
-        RollupStateContext memory ctx = getContext();
+        RollupStateContext memory ctx = getWriteContext();
         _mint(ctx, account, amount);
         saveContext(ctx);
     }
@@ -76,7 +76,7 @@ abstract contract ERC20Rollup is RollupSDK, AccessControl, ERC20 {
 
         _beforeTokenTransfer(account, address(0), amount);
 
-        RollupStateContext memory ctx = getContext();
+        RollupStateContext memory ctx = getWriteContext();
         _balances.sub(
             ctx,
             _balanceTag,
@@ -96,7 +96,7 @@ abstract contract ERC20Rollup is RollupSDK, AccessControl, ERC20 {
         override(ERC20)
         returns (uint256)
     {
-        return _totalSupply.get(getContext());
+        return _totalSupply.get(getReadContext());
     }
 
     function balanceOf(address account)
@@ -106,7 +106,7 @@ abstract contract ERC20Rollup is RollupSDK, AccessControl, ERC20 {
         override(ERC20)
         returns (uint256)
     {
-        return _balances.get(getContext(), account);
+        return _balances.get(getReadContext(), account);
     }
 
     function rollupToOtherChain(
@@ -122,13 +122,13 @@ abstract contract ERC20Rollup is RollupSDK, AccessControl, ERC20 {
     }
 
     // called by RollupSDK
-    function recoverRollupStateMap(
-        uint16 tag,
-        RollupMapMsg[] memory entries,
-        uint256
-    ) internal virtual override {
+    function _recoverRollupStateMap(uint16 tag, RollupMapMsg[] memory entries)
+        internal
+        virtual
+        override
+    {
         if (tag == _balanceTag) {
-            RollupStateContext memory ctx = getContext();
+            RollupStateContext memory ctx = getWriteContext();
             for (uint256 j = 0; j < entries.length; j++) {
                 address account = abi.decode(entries[j].key, (address));
                 uint256 amount = abi.decode(entries[j].value, (uint256));

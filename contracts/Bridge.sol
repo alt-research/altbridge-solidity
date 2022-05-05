@@ -90,6 +90,13 @@ contract Bridge is Pausable, AccessControl, SafeMath, IRollupSender {
         uint256 startBlock,
         bytes32 proof
     );
+    event RecoverRollupState(
+        uint8 originDomainId,
+        bytes32 resourceID,
+        uint64 nonce,
+        uint64 batchIdx,
+        uint64 totalBatch
+    );
 
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
     bytes32 public constant ROLLUPER_ROLE = keccak256("ROLLUPER_ROLE");
@@ -750,6 +757,17 @@ contract Bridge is Pausable, AccessControl, SafeMath, IRollupSender {
             proposal,
             states,
             proof
+        );
+        RollupStateHeader memory header = abi.decode(
+            states,
+            (RollupStateHeader)
+        );
+        emit RecoverRollupState(
+            originDomainID,
+            resourceID,
+            nonce,
+            header.idx,
+            proposal.totalBatch
         );
     }
 }

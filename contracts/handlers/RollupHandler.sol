@@ -35,7 +35,7 @@ contract RollupHandler is
         uint64 nonce;
         bytes32 msgRootHash;
         bytes32 stateRootHash;
-        uint256 totalBatch;
+        uint64 totalBatch;
         // bytes state; unused
     }
 
